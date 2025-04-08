@@ -13,18 +13,19 @@ EMAIL_RECIPIENT = os.getenv("EMAIL_RECIPIENT")
 SMTP_SERVER = "smtp.gmail.com"
 SMTP_PORT = 587
 
-# URL de base pour SNAP Eurostar
-BASE_URL = "https://snap.eurostar.com/fr-fr/search?adult=1&origin=8727100&destination=8400058&outbound={date}"
+# URLs de base pour SNAP Eurostar
+PARIS_TO_AMS = "https://snap.eurostar.com/fr-fr/search?adult=1&origin=8727100&destination=8400058&outbound={date}"
+AMS_TO_PARIS = "https://snap.eurostar.com/fr-fr/search?adult=1&origin=8400058&destination=8727100&outbound={date}"
 
-async def check_availability(playwright):
+async def check_availability(playwright, route_name, base_url):
     browser = await playwright.chromium.launch()
     page = await browser.new_page()
     available = []
 
     for i in range(1, 9):  # J+1 à J+8
         date = (datetime.now() + timedelta(days=i)).strftime("%Y-%m-%d")
-        url = BASE_URL.format(date=date)
-        print(f"Checking: {url}")
+        url = base_url.format(date=date)
+        print(f"Checking {route_name}: {url}")
 
         try:
             await page.goto(url, timeout=60000)
@@ -37,24 +38,27 @@ async def check_availability(playwright):
             if price_blocks:
                 prices = [block.get_text(strip=True) for block in price_blocks]
                 price_summary = ", ".join(prices)
-                print(f"✅ Disponibilité trouvée pour {date} ({price_summary})")
-                available.append((date, url, price_summary))
+                print(f"✅ Disponibilité trouvée pour {route_name} le {date} ({price_summary})")
+                available.append((route_name, date, url, price_summary))
             else:
-                print(f"❌ Aucune disponibilité pour {date}")
+                print(f"❌ Aucune disponibilité pour {route_name} le {date}")
 
         except Exception as e:
-            print(f"Erreur pour {date} : {e}")
+            print(f"Erreur pour {route_name} le {date} : {e}")
 
     await browser.close()
     return available
 
-def send_email(available_dates):
-    message = "🚄 Trains disponibles trouvés aux dates suivantes :\n\n"
-    for date, url, price in available_dates:
-        message += f"- {date} : {price} → {url}\n"
+def send_email(available_trips):
+    if not available_trips:
+        return
+
+    message = "🚄 Disponibilités Eurostar détectées :\n\n"
+    for route, date, url, price in available_trips:
+        message += f"- {route} le {date} : {price} → {url}\n"
 
     msg = MIMEText(message)
-    msg["Subject"] = "📬 Disponibilités Eurostar détectées"
+    msg["Subject"] = "📬 Trains Eurostar disponibles"
     msg["From"] = EMAIL_SENDER
     msg["To"] = EMAIL_RECIPIENT
 
@@ -66,11 +70,11 @@ def send_email(available_dates):
 def main():
     async def run():
         async with async_playwright() as playwright:
-            available_dates = await check_availability(playwright)
-            if available_dates:
-                send_email(available_dates)
-            else:
-                print("Aucune disponibilité trouvée.")
+            paris_ams = await check_availability(playwright, "Paris → Amsterdam", PARIS_TO_AMS)
+            ams_paris = await check_availability(playwright, "Amsterdam → Paris", AMS_TO_PARIS)
+            all_available = paris_ams + ams_paris
+            send_email(all_available)
+
     asyncio.run(run())
 
 if __name__ == "__main__":
