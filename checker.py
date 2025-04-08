@@ -30,6 +30,7 @@ async def check_availability(playwright):
             await page.wait_for_timeout(5000)
 
             content = await page.content()
+            print(content)
             if "Désolés, cet itinéraire est actuellement complet" not in content:
                 available.append((date, url))
 
