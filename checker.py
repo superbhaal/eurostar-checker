@@ -4,6 +4,7 @@ from datetime import datetime, timedelta
 from playwright.async_api import async_playwright
 import smtplib
 from email.mime.text import MIMEText
+from bs4 import BeautifulSoup
 
 # Configuration email depuis variables d'environnement
 EMAIL_SENDER = os.getenv("EMAIL_SENDER")
@@ -30,9 +31,16 @@ async def check_availability(playwright):
             await page.wait_for_timeout(5000)
 
             content = await page.content()
-            print(content)
-            if "Désolés, cet itinéraire est actuellement complet" not in content:
-                available.append((date, url))
+            soup = BeautifulSoup(content, "html.parser")
+            price_blocks = soup.find_all("div", attrs={"data-testid": lambda x: x and "-price" in x})
+
+            if price_blocks:
+                prices = [block.get_text(strip=True) for block in price_blocks]
+                price_summary = ", ".join(prices)
+                print(f"✅ Disponibilité trouvée pour {date} ({price_summary})")
+                available.append((date, url, price_summary))
+            else:
+                print(f"❌ Aucune disponibilité pour {date}")
 
         except Exception as e:
             print(f"Erreur pour {date} : {e}")
@@ -42,8 +50,8 @@ async def check_availability(playwright):
 
 def send_email(available_dates):
     message = "🚄 Trains disponibles trouvés aux dates suivantes :\n\n"
-    for date, url in available_dates:
-        message += f"- {date} → {url}\n"
+    for date, url, price in available_dates:
+        message += f"- {date} : {price} → {url}\n"
 
     msg = MIMEText(message)
     msg["Subject"] = "📬 Disponibilités Eurostar détectées"
