@@ -4,7 +4,6 @@ from datetime import datetime, timedelta
 from playwright.async_api import async_playwright
 import smtplib
 from email.mime.text import MIMEText
-from bs4 import BeautifulSoup
 
 # Configuration email depuis variables d'environnement
 EMAIL_SENDER = os.getenv("EMAIL_SENDER")
@@ -32,12 +31,10 @@ async def check_snap(playwright, route_name, base_url):
         try:
             await page.goto(url, timeout=60000)
             await page.wait_for_timeout(5000)
-            content = await page.content()
-            soup = BeautifulSoup(content, "html.parser")
-            price_blocks = soup.find_all("div", attrs={"data-testid": lambda x: x and "-price" in x})
+            price_blocks = await page.query_selector_all("div[data-testid$='-price']")
 
             if price_blocks:
-                prices = [block.get_text(strip=True) for block in price_blocks]
+                prices = [await block.inner_text() for block in price_blocks]
                 price_summary = ", ".join(prices)
                 available.append((route_name, date, url, f"{price_summary} (Eurostar Snap)"))
 
@@ -52,7 +49,7 @@ async def check_eurostar(playwright, route_name, base_url):
     page = await browser.new_page()
     available = []
 
-    for i in range(1, 3):
+    for i in range(1, 9):
         date = (datetime.now() + timedelta(days=i)).strftime("%Y-%m-%d")
         url = base_url.format(date=date)
         print(f"[Main Site] Checking {route_name}: {url}")
@@ -60,29 +57,27 @@ async def check_eurostar(playwright, route_name, base_url):
         try:
             await page.goto(url, timeout=60000)
 
-            # Fermer la popup si présente
             try:
-                await page.wait_for_selector('button[aria-label="Fermer"]', timeout=3000)
+                await page.wait_for_selector('button[aria-label="Fermer"]', timeout=10000)
                 await page.click('button[aria-label="Fermer"]')
                 print("Popup fermée")
             except:
                 print("Pas de popup à fermer")
 
             await page.wait_for_timeout(5000)
-            content = await page.content()
-            soup = BeautifulSoup(content, "html.parser")
-            print(soup)
 
-            rows = soup.select(".fare-table__row")
+            rows = await page.query_selector_all(".fare-table__row")
             for row in rows:
-                time_block = row.select_one(".fare-table__departure")
+                time_block = await row.query_selector(".fare-table__departure")
                 if not time_block:
                     continue
                 for cls, label in zip(["standard", "plus", "premier"], ["Eurostar Standard", "Eurostar Plus", "Eurostar Premier"]):
-                    cell = row.select_one(f".fare-table__cell--{cls}")
-                    if cell and "Non disponible" not in cell.get_text():
-                        price = cell.get_text(strip=True).split("\n")[0]
-                        available.append((route_name, date, url, f"{price} ({label})"))
+                    cell = await row.query_selector(f".fare-table__cell--{cls}")
+                    if cell:
+                        text = await cell.inner_text()
+                        if "Non disponible" not in text:
+                            price = text.split("\n")[0]
+                            available.append((route_name, date, url, f"{price} ({label})"))
 
         except Exception as e:
             print(f"Erreur EUROSTAR.COM pour {route_name} le {date} : {e}")
