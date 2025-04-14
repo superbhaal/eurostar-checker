@@ -70,6 +70,7 @@ async def check_eurostar(playwright, route_name, base_url):
                     continue
                 for cls, label in zip(["standard", "plus", "premier"], ["Eurostar Standard", "Eurostar Plus", "Eurostar Premier"]):
                     cell = row.select_one(f".fare-table__cell--{cls}")
+                    print(cell.get_text())
                     if cell and "Non disponible" not in cell.get_text():
                         price = cell.get_text(strip=True).split("\n")[0]
                         available.append((route_name, date, url, f"{price} ({label})"))
