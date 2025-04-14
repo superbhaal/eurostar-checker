@@ -59,6 +59,15 @@ async def check_eurostar(playwright, route_name, base_url):
 
         try:
             await page.goto(url, timeout=60000)
+
+            # Fermer la popup si présente
+            try:
+                await page.wait_for_selector('button[aria-label="Fermer"]', timeout=3000)
+                await page.click('button[aria-label="Fermer"]')
+                print("Popup fermée")
+            except:
+                print("Pas de popup à fermer")
+
             await page.wait_for_timeout(5000)
             content = await page.content()
             soup = BeautifulSoup(content, "html.parser")
@@ -70,7 +79,6 @@ async def check_eurostar(playwright, route_name, base_url):
                     continue
                 for cls, label in zip(["standard", "plus", "premier"], ["Eurostar Standard", "Eurostar Plus", "Eurostar Premier"]):
                     cell = row.select_one(f".fare-table__cell--{cls}")
-                    print(cell.get_text())
                     if cell and "Non disponible" not in cell.get_text():
                         price = cell.get_text(strip=True).split("\n")[0]
                         available.append((route_name, date, url, f"{price} ({label})"))
