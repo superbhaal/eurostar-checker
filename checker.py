@@ -13,24 +13,25 @@ EMAIL_RECIPIENT = os.getenv("EMAIL_RECIPIENT")
 SMTP_SERVER = "smtp.gmail.com"
 SMTP_PORT = 587
 
-# URLs de base pour SNAP Eurostar
-PARIS_TO_AMS = "https://snap.eurostar.com/fr-fr/search?adult=1&origin=8727100&destination=8400058&outbound={date}"
-AMS_TO_PARIS = "https://snap.eurostar.com/fr-fr/search?adult=1&origin=8400058&destination=8727100&outbound={date}"
+# URLs de base
+SNAP_PARIS_TO_AMS = "https://snap.eurostar.com/fr-fr/search?adult=1&origin=8727100&destination=8400058&outbound={date}"
+SNAP_AMS_TO_PARIS = "https://snap.eurostar.com/fr-fr/search?adult=1&origin=8400058&destination=8727100&outbound={date}"
+EUROSTAR_PARIS_TO_AMS = "https://www.eurostar.com/search/fr-fr?origin=8727100&destination=8400058&adult=1&child=0&infant=0&youth=0&senior=0&direction=outbound&outbound={date}"
+EUROSTAR_AMS_TO_PARIS = "https://www.eurostar.com/search/fr-fr?adult=1&origin=8400058&destination=8727100&outbound={date}"
 
-async def check_availability(playwright, route_name, base_url):
+async def check_snap(playwright, route_name, base_url):
     browser = await playwright.chromium.launch()
     page = await browser.new_page()
     available = []
 
-    for i in range(1, 9):  # J+1 à J+8
+    for i in range(1, 9):
         date = (datetime.now() + timedelta(days=i)).strftime("%Y-%m-%d")
         url = base_url.format(date=date)
-        print(f"Checking {route_name}: {url}")
+        print(f"[Snap] Checking {route_name}: {url}")
 
         try:
             await page.goto(url, timeout=60000)
             await page.wait_for_timeout(5000)
-
             content = await page.content()
             soup = BeautifulSoup(content, "html.parser")
             price_blocks = soup.find_all("div", attrs={"data-testid": lambda x: x and "-price" in x})
@@ -38,13 +39,43 @@ async def check_availability(playwright, route_name, base_url):
             if price_blocks:
                 prices = [block.get_text(strip=True) for block in price_blocks]
                 price_summary = ", ".join(prices)
-                print(f"✅ Disponibilité trouvée pour {route_name} le {date} ({price_summary})")
-                available.append((route_name, date, url, price_summary))
-            else:
-                print(f"❌ Aucune disponibilité pour {route_name} le {date}")
+                available.append((route_name, date, url, f"{price_summary} (Eurostar Snap)"))
 
         except Exception as e:
-            print(f"Erreur pour {route_name} le {date} : {e}")
+            print(f"Erreur SNAP pour {route_name} le {date} : {e}")
+
+    await browser.close()
+    return available
+
+async def check_eurostar(playwright, route_name, base_url):
+    browser = await playwright.chromium.launch()
+    page = await browser.new_page()
+    available = []
+
+    for i in range(1, 9):
+        date = (datetime.now() + timedelta(days=i)).strftime("%Y-%m-%d")
+        url = base_url.format(date=date)
+        print(f"[Main Site] Checking {route_name}: {url}")
+
+        try:
+            await page.goto(url, timeout=60000)
+            await page.wait_for_timeout(5000)
+            content = await page.content()
+            soup = BeautifulSoup(content, "html.parser")
+
+            rows = soup.select(".fare-table__row")
+            for row in rows:
+                time_block = row.select_one(".fare-table__departure")
+                if not time_block:
+                    continue
+                for cls, label in zip(["standard", "plus", "premier"], ["Eurostar Standard", "Eurostar Plus", "Eurostar Premier"]):
+                    cell = row.select_one(f".fare-table__cell--{cls}")
+                    if cell and "Non disponible" not in cell.get_text():
+                        price = cell.get_text(strip=True).split("\n")[0]
+                        available.append((route_name, date, url, f"{price} ({label})"))
+
+        except Exception as e:
+            print(f"Erreur EUROSTAR.COM pour {route_name} le {date} : {e}")
 
     await browser.close()
     return available
@@ -70,9 +101,12 @@ def send_email(available_trips):
 def main():
     async def run():
         async with async_playwright() as playwright:
-            paris_ams = await check_availability(playwright, "Paris → Amsterdam", PARIS_TO_AMS)
-            ams_paris = await check_availability(playwright, "Amsterdam → Paris", AMS_TO_PARIS)
-            all_available = paris_ams + ams_paris
+            snap_1 = await check_snap(playwright, "Paris → Amsterdam", SNAP_PARIS_TO_AMS)
+            snap_2 = await check_snap(playwright, "Amsterdam → Paris", SNAP_AMS_TO_PARIS)
+            eurostar_1 = await check_eurostar(playwright, "Paris → Amsterdam", EUROSTAR_PARIS_TO_AMS)
+            eurostar_2 = await check_eurostar(playwright, "Amsterdam → Paris", EUROSTAR_AMS_TO_PARIS)
+
+            all_available = snap_1 + snap_2 + eurostar_1 + eurostar_2
             send_email(all_available)
 
     asyncio.run(run())
