@@ -52,7 +52,7 @@ async def check_eurostar(playwright, route_name, base_url):
     page = await browser.new_page()
     available = []
 
-    for i in range(1, 9):
+    for i in range(1, 3):
         date = (datetime.now() + timedelta(days=i)).strftime("%Y-%m-%d")
         url = base_url.format(date=date)
         print(f"[Main Site] Checking {route_name}: {url}")
@@ -71,6 +71,7 @@ async def check_eurostar(playwright, route_name, base_url):
             await page.wait_for_timeout(5000)
             content = await page.content()
             soup = BeautifulSoup(content, "html.parser")
+            print(soup)
 
             rows = soup.select(".fare-table__row")
             for row in rows:
