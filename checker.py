@@ -58,19 +58,22 @@ async def check_eurostar(playwright, route_name, base_url):
             await page.goto(url, timeout=60000)
             await page.wait_for_timeout(7000)
 
-            # Screenshot debug optionnel
-            await page.screenshot(path=f"screenshot_{route_name.replace(' ', '_')}_{date}.png")
-
-            # Forcer la fermeture de la popup via classe CSS générique si aria-label échoue
+            # Fermer popup si détectée
             try:
-                close_popup = await page.query_selector("button[aria-label='Fermer'], button.fare-alert__close")
-                if close_popup:
-                    await close_popup.click()
-                    print("Popup fermée")
+                popup_title = await page.query_selector("text=Capacité réduite.")
+                if popup_title:
+                    close_btn = await page.query_selector("text=Fermer")
+                    if close_btn:
+                        await close_btn.click()
+                        print("Popup fermée via texte 'Fermer'")
+                    else:
+                        print("Texte 'Fermer' non trouvé")
                 else:
-                    print("Pas de popup trouvée")
+                    print("Pas de popup détectée")
             except Exception as e:
                 print(f"Erreur fermeture popup : {e}")
+
+            await page.screenshot(path=f"screenshot_{route_name.replace(' ', '_')}_{date}.png")
 
             rows = await page.query_selector_all(".fare-table__row")
             print(f"Nombre de lignes trouvées : {len(rows)}")
