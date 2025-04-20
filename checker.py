@@ -56,17 +56,25 @@ async def check_eurostar(playwright, route_name, base_url):
 
         try:
             await page.goto(url, timeout=60000)
+            await page.wait_for_timeout(7000)
 
+            # Screenshot debug optionnel
+            await page.screenshot(path=f"screenshot_{route_name.replace(' ', '_')}_{date}.png")
+
+            # Forcer la fermeture de la popup via classe CSS générique si aria-label échoue
             try:
-                await page.wait_for_selector('button[aria-label="Fermer"]', timeout=10000)
-                await page.click('button[aria-label="Fermer"]')
-                print("Popup fermée")
-            except:
-                print("Pas de popup à fermer")
+                close_popup = await page.query_selector("button[aria-label='Fermer'], button.fare-alert__close")
+                if close_popup:
+                    await close_popup.click()
+                    print("Popup fermée")
+                else:
+                    print("Pas de popup trouvée")
+            except Exception as e:
+                print(f"Erreur fermeture popup : {e}")
 
-            await page.wait_for_timeout(3000)
-            print(page)
             rows = await page.query_selector_all(".fare-table__row")
+            print(f"Nombre de lignes trouvées : {len(rows)}")
+
             for row in rows:
                 time_block = await row.query_selector(".fare-table__departure")
                 if not time_block:
@@ -75,6 +83,7 @@ async def check_eurostar(playwright, route_name, base_url):
                     cell = await row.query_selector(f".fare-table__cell--{cls}")
                     if cell:
                         text = await cell.inner_text()
+                        print(f"[{label}] cell text: {text}")
                         if "Non disponible" not in text:
                             price = text.split("\n")[0]
                             available.append((route_name, date, url, f"{price} ({label})"))
