@@ -58,7 +58,11 @@ async def check_eurostar(playwright, route_name, base_url):
             await page.goto(url, timeout=60000)
             await page.wait_for_timeout(7000)
 
-            # Fermer popup si détectée
+            # Simuler une pression sur espace pour forcer l'affichage de contenu dynamique ou fermeture de popup
+            await page.keyboard.press(" ")
+            print("Touche espace simulée")
+
+            # Fermer popup si détectée via texte
             try:
                 popup_title = await page.query_selector("text=Capacité réduite.")
                 if popup_title:
