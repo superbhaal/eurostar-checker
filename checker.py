@@ -64,8 +64,8 @@ async def check_eurostar(playwright, route_name, base_url):
             except:
                 print("Pas de popup à fermer")
 
-            await page.wait_for_timeout(5000)
-
+            await page.wait_for_timeout(3000)
+            print(page)
             rows = await page.query_selector_all(".fare-table__row")
             for row in rows:
                 time_block = await row.query_selector(".fare-table__departure")
