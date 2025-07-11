@@ -57,7 +57,7 @@ def send_email(available_trips):
             message += "\n"
 
     msg = MIMEText(message)
-    msg["Subject"] = "🤖 The Bot to Reunite Lovers - Eurostar Snap Availability ❤️"
+    msg["Subject"] = "🤖 The Bot to Reunite Lovers & Friends - Eurostar Snap Availability ❤️"
     msg["From"] = EMAIL_SENDER
     msg["To"] = EMAIL_RECIPIENT
 
