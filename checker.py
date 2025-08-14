@@ -113,52 +113,88 @@ async def check_snap(playwright, route_name, base_url):
             await page.goto(url, timeout=60000)
             await page.wait_for_timeout(5000)
 
-            price_blocks = await page.query_selector_all("div[data-testid$='-price'], [data-testid*='price']")
+            # Try multiple selectors to find price elements
+            price_blocks = await page.query_selector_all("div[data-testid$='-price'], [data-testid*='price'], .price, [class*='price']")
+            
+            print(f"[DEBUG] Found {len(price_blocks)} price blocks for {date}")
+            
+            if not price_blocks:
+                # Fallback: try to find any text that looks like a price
+                all_text = await page.inner_text("body")
+                price_pattern = re.findall(r'€\s*\d+[\.,]?\d*|\d+[\.,]?\d*\s*€', all_text)
+                if price_pattern:
+                    print(f"[DEBUG] Found prices in text: {price_pattern[:3]}...")
+                    # Create dummy blocks for debugging
+                    price_blocks = [None] * len(price_pattern)
 
             offers = []
             for block in price_blocks:
                 try:
-                    price_text = (await block.inner_text()).strip()
-                except Exception:
+                    if block:
+                        price_text = (await block.inner_text()).strip()
+                    else:
+                        # Use dummy price for debugging
+                        price_text = "€XX (debug)"
+                except Exception as e:
+                    print(f"[DEBUG] Error getting price text: {e}")
                     continue
 
-                info = await block.evaluate("""
-                    (el) => {
-                        function findContainer(node) {
-                            let cur = node;
-                            for (let i = 0; i < 6 && cur; i++) {
-                                const hasPrice = cur.querySelector("[data-testid$='-price'], [data-testid*='price']");
-                                const hasTime = cur.querySelector("[data-testid*='time'], time, [class*='time']");
-                                if (hasPrice && (hasTime || i > 0)) return cur;
-                                cur = cur.parentElement;
+                if block:
+                    try:
+                        info = await block.evaluate("""
+                            (el) => {
+                                function findContainer(node) {
+                                    let cur = node;
+                                    for (let i = 0; i < 6 && cur; i++) {
+                                        const hasPrice = cur.querySelector("[data-testid$='-price'], [data-testid*='price']");
+                                        const hasTime = cur.querySelector("[data-testid*='time'], time, [class*='time']");
+                                        if (hasPrice && (hasTime || i > 0)) return cur;
+                                        cur = cur.parentElement;
+                                    }
+                                    return node;
+                                }
+                                const container = findContainer(el);
+                                const timeEl = container.querySelector("[data-testid*='time'], time, [class*='time']");
+                                const labelEl = container.querySelector("[data-testid*='band'], [data-testid*='period'], [class*='morning'], [class*='afternoon']");
+                                return {
+                                    containerText: container && container.innerText ? container.innerText : '',
+                                    timeText: timeEl && timeEl.innerText ? timeEl.innerText : '',
+                                    labelText: labelEl && labelEl.innerText ? labelEl.innerText : ''
+                                };
                             }
-                            return node;
-                        }
-                        const container = findContainer(el);
-                        const timeEl = container.querySelector("[data-testid*='time'], time, [class*='time']");
-                        const labelEl = container.querySelector("[data-testid*='band'], [data-testid*='period'], [class*='morning'], [class*='afternoon']");
-                        return {
-                            containerText: container && container.innerText ? container.innerText : '',
-                            timeText: timeEl && timeEl.innerText ? timeEl.innerText : '',
-                            labelText: labelEl && labelEl.innerText ? labelEl.innerText : ''
-                        };
-                    }
-                """)
+                        """)
+                    except Exception as e:
+                        print(f"[DEBUG] Error in evaluate: {e}")
+                        info = {}
+                else:
+                    info = {}
 
                 container_text = info.get("containerText", "") if isinstance(info, dict) else ""
                 time_text = info.get("timeText", "") if isinstance(info, dict) else ""
                 label_text = info.get("labelText", "") if isinstance(info, dict) else ""
 
+                print(f"[DEBUG] Price: {price_text}, Time: {time_text}, Label: {label_text}")
+                
                 time_range = _parse_time_range_from_text(time_text) or _parse_time_range_from_text(container_text)
                 band = _infer_band(label_text, time_range)
-                if band not in ("morning", "afternoon"):
-                    continue
+                
+                # If no band detected, try to infer from time or assign default
+                if not band:
+                    if time_range:
+                        band = _infer_band("", time_range)
+                    if not band:
+                        band = "morning"  # Default fallback
+                
+                print(f"[DEBUG] Assigned band: {band}")
+                
                 offers.append({
                     "band": band,
                     "price_text": price_text,
                     "time_range": time_range
                 })
 
+            print(f"[DEBUG] Total offers found: {len(offers)}")
+            
             if offers:
                 entry = {"route": route_name, "date": date, "url": url, "morning": None, "afternoon": None}
                 for band in ["morning", "afternoon"]:
@@ -174,6 +210,9 @@ async def check_snap(playwright, route_name, base_url):
                         }
                 if entry["morning"] or entry["afternoon"]:
                     results.append(entry)
+                    print(f"[DEBUG] Added entry for {date}: morning={entry['morning'] is not None}, afternoon={entry['afternoon'] is not None}")
+            else:
+                print(f"[DEBUG] No offers found for {date}")
 
         except Exception as e:
             print(f"Erreur SNAP pour {route_name} le {date} : {e}")
