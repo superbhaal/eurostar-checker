@@ -238,15 +238,13 @@ async def check_snap(playwright, route_name, base_url):
                                     // Also look for time patterns in the container text
                                     const containerText = container.innerText || '';
                                     const timePatterns = [
-                                        // French format: "Depart entre 06:10 et 14:00" (simplified)
-                                        /depart\\s+entre\\s+(\\d{1,2}:\\d{2})\\s+et\\s+(\\d{1,2}:\\d{2})/gi,
-                                        /depart\\s+entre\\s+(\\d{1,2})h(\\d{2})\\s+et\\s+(\\d{1,2})h(\\d{2})/gi,
-                                        // Standard formats
-                                        /(\\d{1,2}[h:]\\d{2})\\s*[-–—]\\s*(\\d{1,2}[h:]\\d{2})/gi,
-                                        /(\\d{1,2}h?)\\s*[-–—]\\s*(\\d{1,2}h?)/gi,
-                                        /(\\d{1,2}:\\d{2})\\s*[-–—]\\s*(\\d{1,2}:\\d{2})/gi,
-                                        // English format: "Departure between XX:XX and YY:YY"
-                                        /departure\\s+between\\s+(\\d{1,2}:\\d{2})\\s+and\\s+(\\d{1,2}:\\d{2})/gi
+                                        // Simple time patterns without special characters
+                                        /(\\d{1,2}:\\d{2})\\s*-\\s*(\\d{1,2}:\\d{2})/gi,
+                                        /(\\d{1,2})h(\\d{2})\\s*-\\s*(\\d{1,2})h(\\d{2})/gi,
+                                        /(\\d{1,2})\\s*-\\s*(\\d{1,2})/gi,
+                                        // Look for any text containing time ranges
+                                        /(\\d{1,2}:\\d{2})\\s*and\\s*(\\d{1,2}:\\d{2})/gi,
+                                        /(\\d{1,2}:\\d{2})\\s*to\\s*(\\d{1,2}:\\d{2})/gi
                                     ];
                                     
                                     timePatterns.forEach(pattern => {
