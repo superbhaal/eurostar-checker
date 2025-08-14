@@ -238,9 +238,9 @@ async def check_snap(playwright, route_name, base_url):
                                     // Also look for time patterns in the container text
                                     const containerText = container.innerText || '';
                                     const timePatterns = [
-                                        // French format: "Départ entre 06:10 et 14:00"
-                                        /départ\\s+entre\\s+(\\d{1,2}:\\d{2})\\s+et\\s+(\\d{1,2}:\\d{2})/gi,
-                                        /départ\\s+entre\\s+(\\d{1,2})h(\\d{2})\\s+et\\s+(\\d{1,2})h(\\d{2})/gi,
+                                        // French format: "Depart entre 06:10 et 14:00" (simplified)
+                                        /depart\\s+entre\\s+(\\d{1,2}:\\d{2})\\s+et\\s+(\\d{1,2}:\\d{2})/gi,
+                                        /depart\\s+entre\\s+(\\d{1,2})h(\\d{2})\\s+et\\s+(\\d{1,2})h(\\d{2})/gi,
                                         // Standard formats
                                         /(\\d{1,2}[h:]\\d{2})\\s*[-–—]\\s*(\\d{1,2}[h:]\\d{2})/gi,
                                         /(\\d{1,2}h?)\\s*[-–—]\\s*(\\d{1,2}h?)/gi,
@@ -438,7 +438,7 @@ def send_email(available_entries):
         table_html = build_table(route_entries_sorted)
         
         # Add emojis to city names
-        route_with_emojis = route.replace("Paris", "🗼 Paris").replace("Amsterdam", "Amsterdam ☕")
+        route_with_emojis = route.replace("Paris", "🗼 Paris 🗼").replace("Amsterdam", "☕ Amsterdam ☕")
         
         sections.append(
             f"<h3 style=\"font-family:Arial,Helvetica,sans-serif\">{route_with_emojis}</h3>" + table_html
