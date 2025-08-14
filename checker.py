@@ -251,6 +251,7 @@ def main():
             snap_1 = await check_snap(playwright, "Paris → Amsterdam", SNAP_PARIS_TO_AMS)
             snap_2 = await check_snap(playwright, "Amsterdam → Paris", SNAP_AMS_TO_PARIS)
             all_available = snap_1 + snap_2
+            print(f"ALL_AVAILABLE: {all_available}")
             send_email(all_available)
 
     asyncio.run(run())
