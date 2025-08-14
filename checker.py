@@ -346,8 +346,8 @@ async def check_snap(playwright, route_name, base_url):
                 
                 print(f"[DEBUG] Final time range: {time_range}, Assigned band: {band}")
                 
-                # Only add offers that have a valid price (not debug prices)
-                if price_text != "€XX (debug)":
+                # Only add offers that have a valid price (not debug prices) AND a time range
+                if price_text != "€XX (debug)" and time_range:
                     offers.append({
                         "band": band,
                         "price_text": price_text,
@@ -355,7 +355,10 @@ async def check_snap(playwright, route_name, base_url):
                     })
                     print(f"[DEBUG] Added offer: band={band}, price={price_text}, time={time_range}")
                 else:
-                    print(f"[DEBUG] Skipping debug price")
+                    if price_text == "€XX (debug)":
+                        print(f"[DEBUG] Skipping debug price")
+                    else:
+                        print(f"[DEBUG] Skipping offer without time range: price={price_text}, time={time_range}")
 
             print(f"[DEBUG] Total offers found: {len(offers)}")
             
