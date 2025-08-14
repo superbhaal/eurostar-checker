@@ -265,13 +265,9 @@ async def check_snap(playwright, route_name, base_url):
                                     const pageText = mainPage.innerText || '';
                                     
                                     const unavailableIndicators = [
-                                        'indisponible', 'unavailable', 'sold out', 'complet', 'full',
-                                        'plus de places', 'no seats', 'réservation fermée', 'booking closed',
-                                        'non disponible', 'not available', 'épuisé', 'exhausted',
-                                        'désolés, aucun billet snap n\'est disponible à cette date',
-                                        'aucun billet snap n\'est disponible',
-                                        'aucun billet disponible',
-                                        'pas de disponibilité'
+                                        'unavailable', 'sold out', 'full', 'no seats', 'booking closed',
+                                        'not available', 'exhausted', 'no tickets available',
+                                        'no snap tickets available', 'no availability'
                                     ];
                                     
                                     // Check both container and main page
