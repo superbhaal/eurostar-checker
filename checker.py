@@ -38,24 +38,53 @@ def _normalize_time_string(time_str: str) -> str:
 def _parse_time_range_from_text(text: str):
     if not text:
         return None
-    lowered = text.lower().replace("h", ":")
-    # Accept separators '-', '–', '—', 'to', 'à'
+    lowered = text.strip().lower()
+    
+    # French format: "Départ entre 06:10 et 14:00"
+    m = re.search(r'départ\s+entre\s+(\d{1,2}):(\d{2})\s+et\s+(\d{1,2}):(\d{2})', lowered)
+    if m:
+        start_h = int(m.group(1))
+        start_m = int(m.group(2))
+        end_h = int(m.group(3))
+        end_m = int(m.group(4))
+        return f"{_normalize_time_component(start_h)}:{_normalize_time_component(start_m)}", f"{_normalize_time_component(end_h)}:{_normalize_time_component(end_m)}"
+    
+    # French format with 'h': "Départ entre 6h10 et 14h00"
+    m = re.search(r'départ\s+entre\s+(\d{1,2})h(\d{2})\s+et\s+(\d{1,2})h(\d{2})', lowered)
+    if m:
+        start_h = int(m.group(1))
+        start_m = int(m.group(2))
+        end_h = int(m.group(3))
+        end_m = int(m.group(4))
+        return f"{_normalize_time_component(start_h)}:{_normalize_time_component(start_m)}", f"{_normalize_time_component(end_h)}:{_normalize_time_component(end_m)}"
+    
+    # English format: "Departure between 06:10 and 14:00"
+    m = re.search(r'departure\s+between\s+(\d{1,2}):(\d{2})\s+and\s+(\d{1,2}):(\d{2})', lowered)
+    if m:
+        start_h = int(m.group(1))
+        start_m = int(m.group(2))
+        end_h = int(m.group(3))
+        end_m = int(m.group(4))
+        return f"{_normalize_time_component(start_h)}:{_normalize_time_component(start_m)}", f"{_normalize_time_component(end_h)}:{_normalize_time_component(end_m)}"
+    
+    # Standard formats with separators
     m = re.search(r"(\d{1,2}:\d{2})\s*(?:-|–|—|to|à)\s*(\d{1,2}:\d{2})", lowered)
-    if not m:
-        # Try to capture without minutes on either side (e.g., 7-12 or 7h-12h)
-        m2 = re.search(r"(\d{1,2})(?::?(\d{2}))?\s*(?:-|–|—|to|à)\s*(\d{1,2})(?::?(\d{2}))?", lowered)
-        if not m2:
-            return None
+    if m:
+        start = _normalize_time_string(m.group(1))
+        end = _normalize_time_string(m.group(2))
+        if start and end:
+            return start, end
+    
+    # Try to capture without minutes on either side (e.g., 7-12 or 7h-12h)
+    m2 = re.search(r"(\d{1,2})(?::?(\d{2}))?\s*(?:-|–|—|to|à)\s*(\d{1,2})(?::?(\d{2}))?", lowered)
+    if m2:
         sh = int(m2.group(1))
         sm = int(m2.group(2)) if m2.group(2) else 0
         eh = int(m2.group(3))
         em = int(m2.group(4)) if m2.group(4) else 0
         return f"{_normalize_time_component(sh)}:{_normalize_time_component(sm)}", f"{_normalize_time_component(eh)}:{_normalize_time_component(em)}"
-    start = _normalize_time_string(m.group(1))
-    end = _normalize_time_string(m.group(2))
-    if not start or not end:
-        return None
-    return start, end
+    
+    return None
 
 
 def _infer_band(label_text: str, time_range):
@@ -145,20 +174,70 @@ async def check_snap(playwright, route_name, base_url):
                             (el) => {
                                 function findContainer(node) {
                                     let cur = node;
-                                    for (let i = 0; i < 6 && cur; i++) {
-                                        const hasPrice = cur.querySelector("[data-testid$='-price'], [data-testid*='price']");
-                                        const hasTime = cur.querySelector("[data-testid*='time'], time, [class*='time']");
+                                    for (let i = 0; i < 8 && cur; i++) {
+                                        const hasPrice = cur.querySelector("[data-testid$='-price'], [data-testid*='price'], .price, [class*='price']");
+                                        const hasTime = cur.querySelector("[data-testid*='time'], time, [class*='time'], [class*='hour'], [class*='departure'], [class*='schedule']");
                                         if (hasPrice && (hasTime || i > 0)) return cur;
                                         cur = cur.parentElement;
                                     }
                                     return node;
                                 }
+                                
+                                function findTimeElements(container) {
+                                    const timeSelectors = [
+                                        "[data-testid*='time']", 
+                                        "time", 
+                                        "[class*='time']", 
+                                        "[class*='hour']", 
+                                        "[class*='departure']", 
+                                        "[class*='schedule']",
+                                        "[class*='depart']",
+                                        "[class*='arrival']",
+                                        "[class*='clock']",
+                                        "[class*='moment']"
+                                    ];
+                                    
+                                    let timeElements = [];
+                                    timeSelectors.forEach(selector => {
+                                        const elements = container.querySelectorAll(selector);
+                                        elements.forEach(el => {
+                                            if (el.innerText && el.innerText.trim()) {
+                                                timeElements.push(el.innerText.trim());
+                                            }
+                                        });
+                                    });
+                                    
+                                    // Also look for time patterns in the container text
+                                    const containerText = container.innerText || '';
+                                    const timePatterns = [
+                                        // French format: "Départ entre 06:10 et 14:00"
+                                        /départ\s+entre\s+(\d{1,2}:\d{2})\s+et\s+(\d{1,2}:\d{2})/gi,
+                                        /départ\s+entre\s+(\d{1,2}h\d{2})\s+et\s+(\d{1,2}h\d{2})/gi,
+                                        // Standard formats
+                                        /(\d{1,2}[h:]\d{2})\s*[-–—]\s*(\d{1,2}[h:]\d{2})/gi,
+                                        /(\d{1,2}h?)\s*[-–—]\s*(\d{1,2}h?)/gi,
+                                        /(\d{1,2}:\d{2})\s*[-–—]\s*(\d{1,2}:\d{2})/gi,
+                                        // English format: "Departure between XX:XX and YY:YY"
+                                        /departure\s+between\s+(\d{1,2}:\d{2})\s+and\s+(\d{1,2}:\d{2})/gi
+                                    ];
+                                    
+                                    timePatterns.forEach(pattern => {
+                                        const matches = containerText.match(pattern);
+                                        if (matches) {
+                                            timeElements.push(...matches);
+                                        }
+                                    });
+                                    
+                                    return timeElements;
+                                }
+                                
                                 const container = findContainer(el);
-                                const timeEl = container.querySelector("[data-testid*='time'], time, [class*='time']");
-                                const labelEl = container.querySelector("[data-testid*='band'], [data-testid*='period'], [class*='morning'], [class*='afternoon']");
+                                const timeElements = findTimeElements(container);
+                                const labelEl = container.querySelector("[data-testid*='band'], [data-testid*='period'], [class*='morning'], [class*='afternoon'], [class*='matin'], [class*='apres']");
+                                
                                 return {
                                     containerText: container && container.innerText ? container.innerText : '',
-                                    timeText: timeEl && timeEl.innerText ? timeEl.innerText : '',
+                                    timeElements: timeElements,
                                     labelText: labelEl && labelEl.innerText ? labelEl.innerText : ''
                                 };
                             }
@@ -170,12 +249,27 @@ async def check_snap(playwright, route_name, base_url):
                     info = {}
 
                 container_text = info.get("containerText", "") if isinstance(info, dict) else ""
-                time_text = info.get("timeText", "") if isinstance(info, dict) else ""
+                time_elements = info.get("timeElements", []) if isinstance(info, dict) else []
                 label_text = info.get("labelText", "") if isinstance(info, dict) else ""
 
-                print(f"[DEBUG] Price: {price_text}, Time: {time_text}, Label: {label_text}")
+                print(f"[DEBUG] Price: {price_text}")
+                print(f"[DEBUG] Time elements found: {time_elements}")
+                print(f"[DEBUG] Label: {label_text}")
+                print(f"[DEBUG] Container text: {container_text[:200]}...")
                 
-                time_range = _parse_time_range_from_text(time_text) or _parse_time_range_from_text(container_text)
+                # Try to find time range from multiple sources
+                time_range = None
+                for time_text in time_elements:
+                    time_range = _parse_time_range_from_text(time_text)
+                    if time_range:
+                        print(f"[DEBUG] Found time range from element: {time_range}")
+                        break
+                
+                if not time_range:
+                    time_range = _parse_time_range_from_text(container_text)
+                    if time_range:
+                        print(f"[DEBUG] Found time range from container: {time_range}")
+                
                 band = _infer_band(label_text, time_range)
                 
                 # If no band detected, try to infer from time or assign default
@@ -185,7 +279,7 @@ async def check_snap(playwright, route_name, base_url):
                     if not band:
                         band = "morning"  # Default fallback
                 
-                print(f"[DEBUG] Assigned band: {band}")
+                print(f"[DEBUG] Final time range: {time_range}, Assigned band: {band}")
                 
                 offers.append({
                     "band": band,
