@@ -288,6 +288,10 @@ async def check_snap(playwright, route_name, base_url):
                                 const labelEl = container.querySelector("[data-testid*='band'], [data-testid*='period'], [class*='morning'], [class*='afternoon'], [class*='matin'], [class*='apres']");
                                 const isAvailable = checkAvailability(container);
                                 
+                                console.log('DEBUG: Container found:', container ? 'yes' : 'no');
+                                console.log('DEBUG: Time elements found:', timeElements);
+                                console.log('DEBUG: Container text preview:', container ? container.innerText.substring(0, 200) : 'none');
+                                
                                 return {
                                     containerText: container && container.innerText ? container.innerText : '',
                                     timeElements: timeElements,
