@@ -212,7 +212,7 @@ async def check_snap(playwright, route_name, base_url):
                                     const timePatterns = [
                                         // French format: "Départ entre 06:10 et 14:00"
                                         /départ\s+entre\s+(\d{1,2}:\d{2})\s+et\s+(\d{1,2}:\d{2})/gi,
-                                        /départ\s+entre\s+(\d{1,2}h\d{2})\s+et\s+(\d{1,2}h\d{2})/gi,
+                                        /départ\s+entre\s+(\d{1,2})h(\d{2})\s+et\s+(\d{1,2})h(\d{2})/gi,
                                         // Standard formats
                                         /(\d{1,2}[h:]\d{2})\s*[-–—]\s*(\d{1,2}[h:]\d{2})/gi,
                                         /(\d{1,2}h?)\s*[-–—]\s*(\d{1,2}h?)/gi,
@@ -231,14 +231,27 @@ async def check_snap(playwright, route_name, base_url):
                                     return timeElements;
                                 }
                                 
+                                function checkAvailability(container) {
+                                    const containerText = (container.innerText || '').toLowerCase();
+                                    const unavailableIndicators = [
+                                        'indisponible', 'unavailable', 'sold out', 'complet', 'full',
+                                        'plus de places', 'no seats', 'réservation fermée', 'booking closed',
+                                        'non disponible', 'not available', 'épuisé', 'exhausted'
+                                    ];
+                                    
+                                    return !unavailableIndicators.some(indicator => containerText.includes(indicator));
+                                }
+                                
                                 const container = findContainer(el);
                                 const timeElements = findTimeElements(container);
                                 const labelEl = container.querySelector("[data-testid*='band'], [data-testid*='period'], [class*='morning'], [class*='afternoon'], [class*='matin'], [class*='apres']");
+                                const isAvailable = checkAvailability(container);
                                 
                                 return {
                                     containerText: container && container.innerText ? container.innerText : '',
                                     timeElements: timeElements,
-                                    labelText: labelEl && labelEl.innerText ? labelEl.innerText : ''
+                                    labelText: labelEl && labelEl.innerText ? labelEl.innerText : '',
+                                    isAvailable: isAvailable
                                 };
                             }
                         """)
@@ -251,11 +264,18 @@ async def check_snap(playwright, route_name, base_url):
                 container_text = info.get("containerText", "") if isinstance(info, dict) else ""
                 time_elements = info.get("timeElements", []) if isinstance(info, dict) else []
                 label_text = info.get("labelText", "") if isinstance(info, dict) else ""
+                is_available = info.get("isAvailable", True) if isinstance(info, dict) else True
 
                 print(f"[DEBUG] Price: {price_text}")
                 print(f"[DEBUG] Time elements found: {time_elements}")
                 print(f"[DEBUG] Label: {label_text}")
+                print(f"[DEBUG] Is available: {is_available}")
                 print(f"[DEBUG] Container text: {container_text[:200]}...")
+                
+                # Skip if the offer is not available
+                if not is_available:
+                    print(f"[DEBUG] Skipping unavailable offer: {price_text}")
+                    continue
                 
                 # Try to find time range from multiple sources
                 time_range = None
@@ -329,12 +349,12 @@ def send_email(available_entries):
         for r in rows:
             def cell_content(slot):
                 if not slot:
-                    return "—<br/><small>time not specified</small>"
+                    return "—<br/><small>no availability for now</small>"
                 price_html = f'<a href="{slot["url"]}">{slot["price_text"]}</a>'
                 if slot.get("time_range"):
                     start, end = slot["time_range"]
                     return f"{price_html}<br/><small>between {start} and {end}</small>"
-                return f"{price_html}<br/><small>time not specified</small>"
+                return f"{price_html}<br/><small>no availability for now</small>"
             parts.append(
                 f"<tr>"
                 f"<td {td_style}>{r['date']}</td>"
@@ -360,8 +380,12 @@ def send_email(available_entries):
         # sort by date
         route_entries_sorted = sorted(route_entries, key=lambda e: e["date"])
         table_html = build_table(route_entries_sorted)
+        
+        # Add emojis to city names
+        route_with_emojis = route.replace("Paris", "🗼 Paris").replace("Amsterdam", "Amsterdam ☕")
+        
         sections.append(
-            f"<h3 style=\"font-family:Arial,Helvetica,sans-serif\">{route}</h3>" + table_html
+            f"<h3 style=\"font-family:Arial,Helvetica,sans-serif\">{route_with_emojis}</h3>" + table_html
         )
 
     message = header + "".join(sections)
