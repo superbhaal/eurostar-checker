@@ -233,13 +233,26 @@ async def check_snap(playwright, route_name, base_url):
                                 
                                 function checkAvailability(container) {
                                     const containerText = (container.innerText || '').toLowerCase();
+                                    
+                                    // Check the main page content for availability messages
+                                    const mainPage = document.querySelector('body') || document.body;
+                                    const pageText = mainPage.innerText || '';
+                                    
                                     const unavailableIndicators = [
                                         'indisponible', 'unavailable', 'sold out', 'complet', 'full',
                                         'plus de places', 'no seats', 'réservation fermée', 'booking closed',
-                                        'non disponible', 'not available', 'épuisé', 'exhausted'
+                                        'non disponible', 'not available', 'épuisé', 'exhausted',
+                                        'désolés, aucun billet snap n\'est disponible à cette date',
+                                        'aucun billet snap n\'est disponible',
+                                        'aucun billet disponible',
+                                        'pas de disponibilité'
                                     ];
                                     
-                                    return !unavailableIndicators.some(indicator => containerText.includes(indicator));
+                                    // Check both container and main page
+                                    const containerHasUnavailable = unavailableIndicators.some(indicator => containerText.includes(indicator));
+                                    const pageHasUnavailable = unavailableIndicators.some(indicator => pageText.includes(indicator));
+                                    
+                                    return !containerHasUnavailable && !pageHasUnavailable;
                                 }
                                 
                                 const container = findContainer(el);
@@ -357,7 +370,7 @@ def send_email(available_entries):
                 return f"{price_html}<br/><small>no availability for now</small>"
             parts.append(
                 f"<tr>"
-                f"<td {td_style}>{r['date']}</td>"
+                f"<td {td_style}>{_format_date_for_display(r['date'])}</td>"
                 f"<td {td_style}>{cell_content(r.get('morning'))}</td>"
                 f"<td {td_style}>{cell_content(r.get('afternoon'))}</td>"
                 f"</tr>"
