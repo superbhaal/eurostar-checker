@@ -321,15 +321,19 @@ async def check_snap(playwright, route_name, base_url):
                 # Try to find time range from multiple sources
                 time_range = None
                 for time_text in time_elements:
+                    print(f"[DEBUG] Trying to parse time element: '{time_text}'")
                     time_range = _parse_time_range_from_text(time_text)
                     if time_range:
                         print(f"[DEBUG] Found time range from element: {time_range}")
                         break
                 
                 if not time_range:
+                    print(f"[DEBUG] No time range from elements, trying container text...")
                     time_range = _parse_time_range_from_text(container_text)
                     if time_range:
                         print(f"[DEBUG] Found time range from container: {time_range}")
+                    else:
+                        print(f"[DEBUG] No time range found anywhere")
                 
                 band = _infer_band(label_text, time_range)
                 
@@ -337,16 +341,23 @@ async def check_snap(playwright, route_name, base_url):
                 if not band:
                     if time_range:
                         band = _infer_band("", time_range)
+                        print(f"[DEBUG] Inferred band from time: {band}")
                     if not band:
                         band = "morning"  # Default fallback
+                        print(f"[DEBUG] Using default band: {band}")
                 
                 print(f"[DEBUG] Final time range: {time_range}, Assigned band: {band}")
                 
-                offers.append({
-                    "band": band,
-                    "price_text": price_text,
-                    "time_range": time_range
-                })
+                # Only add offers that have a valid price (not debug prices)
+                if price_text != "€XX (debug)":
+                    offers.append({
+                        "band": band,
+                        "price_text": price_text,
+                        "time_range": time_range
+                    })
+                    print(f"[DEBUG] Added offer: band={band}, price={price_text}, time={time_range}")
+                else:
+                    print(f"[DEBUG] Skipping debug price")
 
             print(f"[DEBUG] Total offers found: {len(offers)}")
             
