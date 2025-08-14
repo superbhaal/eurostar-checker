@@ -379,7 +379,10 @@ async def check_snap(playwright, route_name, base_url):
                     results.append(entry)
                     print(f"[DEBUG] Added entry for {date}: morning={entry['morning'] is not None}, afternoon={entry['afternoon'] is not None}")
             else:
-                print(f"[DEBUG] No offers found for {date}")
+                # Add entry even when no offers are found, to show "no availability for now"
+                entry = {"route": route_name, "date": date, "url": url, "morning": None, "afternoon": None}
+                results.append(entry)
+                print(f"[DEBUG] Added entry for {date} with no availability")
 
         except Exception as e:
             print(f"Erreur SNAP pour {route_name} le {date} : {e}")
