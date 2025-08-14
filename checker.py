@@ -239,6 +239,7 @@ def send_email(available_entries):
     msg["To"] = EMAIL_RECIPIENT
 
     recipients = EMAIL_RECIPIENT.split(",")
+    print(f"[Recipients {recipients}")
     with smtplib.SMTP(SMTP_SERVER, SMTP_PORT) as server:
         server.starttls()
         server.login(EMAIL_SENDER, EMAIL_PASSWORD)
