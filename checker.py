@@ -128,6 +128,34 @@ def _merge_time_ranges(time_ranges):
     ends = sorted(time_ranges, key=lambda r: to_minutes(r[1]), reverse=True)
     return starts[0][0], ends[0][1]
 
+
+def _format_date_for_display(date_str: str) -> str:
+    """Convert YYYY-MM-DD to 'Monday 18th August 2025' format"""
+    try:
+        date_obj = datetime.strptime(date_str, "%Y-%m-%d")
+        
+        # Get day name
+        day_names = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
+        day_name = day_names[date_obj.weekday()]
+        
+        # Get day with ordinal suffix
+        day = date_obj.day
+        if 4 <= day <= 20 or 24 <= day <= 30:
+            suffix = "th"
+        else:
+            suffix = ["st", "nd", "rd"][day % 10 - 1]
+        
+        # Get month name
+        month_names = [
+            "January", "February", "March", "April", "May", "June",
+            "July", "August", "September", "October", "November", "December"
+        ]
+        month_name = month_names[date_obj.month - 1]
+        
+        return f"{day_name} {day}{suffix} {month_name} {date_obj.year}"
+    except Exception:
+        return date_str  # Return original if parsing fails
+
 async def check_snap(playwright, route_name, base_url):
     browser = await playwright.chromium.launch()
     page = await browser.new_page()
