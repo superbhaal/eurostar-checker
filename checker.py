@@ -239,14 +239,14 @@ async def check_snap(playwright, route_name, base_url):
                                     const containerText = container.innerText || '';
                                     const timePatterns = [
                                         // French format: "Départ entre 06:10 et 14:00"
-                                        /départ\s+entre\s+(\d{1,2}:\d{2})\s+et\s+(\d{1,2}:\d{2})/gi,
-                                        /départ\s+entre\s+(\d{1,2})h(\d{2})\s+et\s+(\d{1,2})h(\d{2})/gi,
+                                        /départ\\s+entre\\s+(\\d{1,2}:\\d{2})\\s+et\\s+(\\d{1,2}:\\d{2})/gi,
+                                        /départ\\s+entre\\s+(\\d{1,2})h(\\d{2})\\s+et\\s+(\\d{1,2})h(\\d{2})/gi,
                                         // Standard formats
-                                        /(\d{1,2}[h:]\d{2})\s*[-–—]\s*(\d{1,2}[h:]\d{2})/gi,
-                                        /(\d{1,2}h?)\s*[-–—]\s*(\d{1,2}h?)/gi,
-                                        /(\d{1,2}:\d{2})\s*[-–—]\s*(\d{1,2}:\d{2})/gi,
+                                        /(\\d{1,2}[h:]\\d{2})\\s*[-–—]\\s*(\\d{1,2}[h:]\\d{2})/gi,
+                                        /(\\d{1,2}h?)\\s*[-–—]\\s*(\\d{1,2}h?)/gi,
+                                        /(\\d{1,2}:\\d{2})\\s*[-–—]\\s*(\\d{1,2}:\\d{2})/gi,
                                         // English format: "Departure between XX:XX and YY:YY"
-                                        /departure\s+between\s+(\d{1,2}:\d{2})\s+and\s+(\d{1,2}:\d{2})/gi
+                                        /departure\\s+between\\s+(\\d{1,2}:\\d{2})\\s+and\\s+(\\d{1,2}:\\d{2})/gi
                                     ];
                                     
                                     timePatterns.forEach(pattern => {
