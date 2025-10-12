@@ -622,13 +622,8 @@ def main():
             # Save to database
             save_availability_to_db(all_available)
             
-            # Send email (disabled on Railway due to SMTP restrictions)
-            try:
-                send_email(all_available)
-                print("[DEBUG] Email sent successfully")
-            except Exception as e:
-                print(f"[DEBUG] Email failed (expected on Railway): {e}")
-                print("[DEBUG] Data saved to database successfully")
+            # Send email
+            send_email(all_available)
 
     asyncio.run(run())
 
