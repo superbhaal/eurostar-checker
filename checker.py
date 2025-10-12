@@ -5,7 +5,6 @@ from playwright.async_api import async_playwright
 import smtplib
 from email.mime.text import MIMEText
 import re
-import sqlite3
 
 # Configuration from environment variables
 EMAIL_SENDER = os.getenv("EMAIL_SENDER")
@@ -17,121 +16,6 @@ SMTP_PORT = 587
 # SNAP URLs
 SNAP_PARIS_TO_AMS = "https://snap.eurostar.com/fr-fr/search?adult=1&origin=8727100&destination=8400058&outbound={date}"
 SNAP_AMS_TO_PARIS = "https://snap.eurostar.com/fr-fr/search?adult=1&origin=8400058&destination=8727100&outbound={date}"
-
-# -------------------- Database functions --------------------
-
-def init_database():
-    """Initialize SQLite database and create tables if they don't exist"""
-    conn = sqlite3.connect('eurostar_availability.db')
-    cursor = conn.cursor()
-    
-    # Create table for availability records
-    cursor.execute('''
-        CREATE TABLE IF NOT EXISTS availability (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            route TEXT NOT NULL,
-            travel_date TEXT NOT NULL,
-            band TEXT NOT NULL,
-            price_text TEXT,
-            time_range_start TEXT,
-            time_range_end TEXT,
-            url TEXT,
-            is_available BOOLEAN NOT NULL,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        )
-    ''')
-    
-    # Create index for faster queries
-    cursor.execute('''
-        CREATE INDEX IF NOT EXISTS idx_route_date 
-        ON availability(route, travel_date, created_at)
-    ''')
-    
-    conn.commit()
-    conn.close()
-
-def save_availability_to_db(available_entries):
-    """Save availability data to database"""
-    conn = sqlite3.connect('eurostar_availability.db')
-    cursor = conn.cursor()
-    
-    current_time = datetime.now()
-    
-    for entry in available_entries:
-        route = entry['route']
-        date = entry['date']
-        url = entry['url']
-        
-        # Save morning availability
-        morning = entry.get('morning')
-        if morning:
-            cursor.execute('''
-                INSERT INTO availability 
-                (route, travel_date, band, price_text, time_range_start, time_range_end, url, is_available)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-            ''', (
-                route, date, 'morning', 
-                morning['price_text'],
-                morning['time_range'][0] if morning['time_range'] else None,
-                morning['time_range'][1] if morning['time_range'] else None,
-                url, True
-            ))
-        else:
-            cursor.execute('''
-                INSERT INTO availability 
-                (route, travel_date, band, price_text, time_range_start, time_range_end, url, is_available)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-            ''', (route, date, 'morning', None, None, None, url, False))
-        
-        # Save afternoon availability
-        afternoon = entry.get('afternoon')
-        if afternoon:
-            cursor.execute('''
-                INSERT INTO availability 
-                (route, travel_date, band, price_text, time_range_start, time_range_end, url, is_available)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-            ''', (
-                route, date, 'afternoon', 
-                afternoon['price_text'],
-                afternoon['time_range'][0] if afternoon['time_range'] else None,
-                afternoon['time_range'][1] if afternoon['time_range'] else None,
-                url, True
-            ))
-        else:
-            cursor.execute('''
-                INSERT INTO availability 
-                (route, travel_date, band, price_text, time_range_start, time_range_end, url, is_available)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-            ''', (route, date, 'afternoon', None, None, None, url, False))
-    
-    conn.commit()
-    conn.close()
-    print(f"[DEBUG] Saved {len(available_entries)} entries to database")
-
-def get_availability_history(route=None, days_back=7):
-    """Get availability history from database"""
-    conn = sqlite3.connect('eurostar_availability.db')
-    cursor = conn.cursor()
-    
-    query = '''
-        SELECT route, travel_date, band, price_text, time_range_start, time_range_end, 
-               is_available, created_at
-        FROM availability 
-        WHERE created_at >= datetime('now', '-{} days')
-    '''.format(days_back)
-    
-    params = []
-    if route:
-        query += " AND route = ?"
-        params.append(route)
-    
-    query += " ORDER BY created_at DESC, travel_date, band"
-    
-    cursor.execute(query, params)
-    results = cursor.fetchall()
-    conn.close()
-    
-    return results
 
 # -------------------- Helpers for time/price parsing --------------------
 
@@ -575,20 +459,12 @@ def send_email(available_entries):
         server.sendmail(EMAIL_SENDER, recipients, msg.as_string())
 
 def main():
-    # Initialize database
-    init_database()
-    
     async def run():
         async with async_playwright() as playwright:
             snap_1 = await check_snap(playwright, "Paris → Amsterdam", SNAP_PARIS_TO_AMS)
             snap_2 = await check_snap(playwright, "Amsterdam → Paris", SNAP_AMS_TO_PARIS)
             all_available = snap_1 + snap_2
             print(f"ALL_AVAILABLE: {all_available}")
-            
-            # Save to database
-            save_availability_to_db(all_available)
-            
-            # Send email
             send_email(all_available)
 
     asyncio.run(run())
