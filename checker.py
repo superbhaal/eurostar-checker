@@ -6,8 +6,6 @@ import smtplib
 from email.mime.text import MIMEText
 import re
 import sqlite3
-import psycopg2
-from urllib.parse import urlparse
 
 # Configuration from environment variables
 EMAIL_SENDER = os.getenv("EMAIL_SENDER")
@@ -22,71 +20,39 @@ SNAP_AMS_TO_PARIS = "https://snap.eurostar.com/fr-fr/search?adult=1&origin=84000
 
 # -------------------- Database functions --------------------
 
-def get_database_connection():
-    """Get database connection (PostgreSQL on Railway, SQLite locally)"""
-    database_url = os.getenv("DATABASE_URL")
-    
-    if database_url:
-        # Railway PostgreSQL
-        return psycopg2.connect(database_url)
-    else:
-        # Local SQLite fallback
-        return sqlite3.connect('eurostar_availability.db')
-
 def init_database():
-    """Initialize database and create tables if they don't exist"""
-    conn = get_database_connection()
+    """Initialize SQLite database and create tables if they don't exist"""
+    conn = sqlite3.connect('eurostar_availability.db')
     cursor = conn.cursor()
     
-    if os.getenv("DATABASE_URL"):
-        # PostgreSQL (Railway)
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS availability (
-                id SERIAL PRIMARY KEY,
-                route TEXT NOT NULL,
-                travel_date TEXT NOT NULL,
-                band TEXT NOT NULL,
-                price_text TEXT,
-                time_range_start TEXT,
-                time_range_end TEXT,
-                url TEXT,
-                is_available BOOLEAN NOT NULL,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )
-        ''')
-        
-        cursor.execute('''
-            CREATE INDEX IF NOT EXISTS idx_route_date 
-            ON availability(route, travel_date, created_at)
-        ''')
-    else:
-        # SQLite (local)
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS availability (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                route TEXT NOT NULL,
-                travel_date TEXT NOT NULL,
-                band TEXT NOT NULL,
-                price_text TEXT,
-                time_range_start TEXT,
-                time_range_end TEXT,
-                url TEXT,
-                is_available BOOLEAN NOT NULL,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )
-        ''')
-        
-        cursor.execute('''
-            CREATE INDEX IF NOT EXISTS idx_route_date 
-            ON availability(route, travel_date, created_at)
-        ''')
+    # Create table for availability records
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS availability (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            route TEXT NOT NULL,
+            travel_date TEXT NOT NULL,
+            band TEXT NOT NULL,
+            price_text TEXT,
+            time_range_start TEXT,
+            time_range_end TEXT,
+            url TEXT,
+            is_available BOOLEAN NOT NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    ''')
+    
+    # Create index for faster queries
+    cursor.execute('''
+        CREATE INDEX IF NOT EXISTS idx_route_date 
+        ON availability(route, travel_date, created_at)
+    ''')
     
     conn.commit()
     conn.close()
 
 def save_availability_to_db(available_entries):
     """Save availability data to database"""
-    conn = get_database_connection()
+    conn = sqlite3.connect('eurostar_availability.db')
     cursor = conn.cursor()
     
     current_time = datetime.now()
@@ -144,7 +110,7 @@ def save_availability_to_db(available_entries):
 
 def get_availability_history(route=None, days_back=7):
     """Get availability history from database"""
-    conn = get_database_connection()
+    conn = sqlite3.connect('eurostar_availability.db')
     cursor = conn.cursor()
     
     query = '''
