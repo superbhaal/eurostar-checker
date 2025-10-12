@@ -88,7 +88,7 @@ def _send_via_sendgrid(sender_email, sender_name, recipients, subject, html):
 # Configuration from environment variables
 EMAIL_SENDER = os.getenv("EMAIL_SENDER")
 EMAIL_PASSWORD = os.getenv("EMAIL_PASSWORD")
-EMAIL_RECIPIENT = os.getenv("EMAIL_RECIPIENT")  # comma-separated emails
+EMAIL_RECIPIENT = os.getenv("EMAIL_RECIPIENT", "")  # comma-separated emails
 SMTP_SERVER = "smtp.gmail.com"
 SMTP_PORT = 587
 SMTP_SERVER_ALT = os.getenv("SMTP_SERVER_ALT", "smtp.googlemail.com")
@@ -556,7 +556,7 @@ def send_email(available_entries):
         if ok:
             return
         if attempt < max_global_retries:
-            print("[mail] Global retry in 5s…"); time.sleep(5)
+            print("[mail] Global retry in 5s…"); _time.sleep(5)
     print("[mail] Email delivery failed after all attempts. Continuing without crash.")
 
 def main():
