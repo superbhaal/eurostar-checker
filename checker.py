@@ -1,6 +1,7 @@
 import os
 import asyncio
 from datetime import datetime, timedelta
+import psycopg
 from playwright.async_api import async_playwright
 import smtplib
 from email.mime.text import MIMEText
@@ -97,6 +98,14 @@ SENDGRID_API_KEY = os.getenv("SENDGRID_API_KEY")
 EMAIL_FROM_NAME = os.getenv("EMAIL_FROM_NAME", "Eurostar Snap Bot")
 EMAIL_SUBJECT_PREFIX = os.getenv("EMAIL_SUBJECT_PREFIX", "")
 ROUTE_LABEL = os.getenv("ROUTE_LABEL", "")
+
+# Database configuration (Railway provides DATABASE_URL)
+DATABASE_URL = (
+    os.getenv("DATABASE_URL")
+    or os.getenv("POSTGRES_URL")
+    or os.getenv("PG_URL")
+    or os.getenv("RAILWAY_PG_URL")
+)
 
 
 # SNAP URLs
@@ -473,6 +482,103 @@ async def check_snap(playwright, route_name, base_url):
     await browser.close()
     return results
 
+
+def store_entries_in_db(entries):
+    """Persist scraped availability entries to PostgreSQL for historical tracking."""
+    if not DATABASE_URL:
+        print("[db] DATABASE_URL not configured; skipping storage.")
+        return
+
+    if not entries:
+        print("[db] No entries to store.")
+        return
+
+    try:
+        with psycopg.connect(DATABASE_URL) as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS snap_history (
+                        id BIGSERIAL PRIMARY KEY,
+                        route TEXT NOT NULL,
+                        travel_date DATE NOT NULL,
+                        band TEXT NOT NULL,
+                        price_text TEXT,
+                        time_start TIME,
+                        time_end TIME,
+                        snapshot_taken_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                        booking_url TEXT
+                    )
+                    """
+                )
+
+                snapshot_taken_at = datetime.utcnow()
+                rows_to_insert = []
+
+                for entry in entries:
+                    route = entry.get("route")
+                    date_text = entry.get("date")
+                    try:
+                        travel_date = datetime.strptime(date_text, "%Y-%m-%d").date()
+                    except Exception:
+                        print(f"[db] Skipping entry with invalid date: {date_text}")
+                        continue
+
+                    for band in ("morning", "afternoon"):
+                        slot = entry.get(band)
+                        if not slot:
+                            continue
+
+                        price_text = slot.get("price_text")
+                        booking_url = slot.get("url") or entry.get("url")
+                        time_range = slot.get("time_range")
+                        time_start = time_end = None
+
+                        if time_range:
+                            try:
+                                time_start = datetime.strptime(time_range[0], "%H:%M").time()
+                                time_end = datetime.strptime(time_range[1], "%H:%M").time()
+                            except Exception:
+                                print(f"[db] Invalid time range {time_range} for {route} {date_text} {band}")
+
+                        rows_to_insert.append(
+                            (
+                                route,
+                                travel_date,
+                                band,
+                                price_text,
+                                time_start,
+                                time_end,
+                                snapshot_taken_at,
+                                booking_url,
+                            )
+                        )
+
+                if not rows_to_insert:
+                    print("[db] Nothing to insert after filtering entries.")
+                    return
+
+                cur.executemany(
+                    """
+                    INSERT INTO snap_history (
+                        route,
+                        travel_date,
+                        band,
+                        price_text,
+                        time_start,
+                        time_end,
+                        snapshot_taken_at,
+                        booking_url
+                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                    """,
+                    rows_to_insert,
+                )
+                conn.commit()
+                print(f"[db] Inserted {len(rows_to_insert)} rows into snap_history.")
+    except Exception as exc:
+        print(f"[db] Failed to store entries: {exc}")
+
+
 def send_email(available_entries):
     if not available_entries:
         return
@@ -566,6 +672,7 @@ def main():
             snap_2 = await check_snap(playwright, "Amsterdam → Paris", SNAP_AMS_TO_PARIS)
             all_available = snap_1 + snap_2
             print(f"ALL_AVAILABLE: {all_available}")
+            store_entries_in_db(all_available)
             send_email(all_available)
 
     asyncio.run(run())
