@@ -236,8 +236,9 @@ def send_email_brevo(available_entries):
     sections = []
     for route in ["Paris → Amsterdam","Amsterdam → Paris"]:
         route_entries = [e for e in available_entries if e["route"] == route]
-        if not route_entries: continue
-        route_entries_sorted = sorted(route_entries, key=lambda e: e["date")
+        if not route_entries: 
+            continue
+        route_entries_sorted = sorted(route_entries, key=lambda e: e["date"])  # <-- fixed bracket here
         table_html = build_table(route_entries_sorted)
         sections.append(f"<h3 style=\"font-family:Arial,Helvetica,sans-serif\">{route}</h3>" + table_html)
     html = header + "".join(sections) if sections else header + "<p>No availability for selected dates.</p>"
