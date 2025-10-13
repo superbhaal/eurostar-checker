@@ -27,7 +27,18 @@ def _resolve_all(host, port, ipv4_only=False):
     info_sorted = sorted(info, key=lambda a: 0 if a[0] == _socket.AF_INET else 1)
     return [(fam, sockaddr[0]) for fam,_,_,_,sockaddr in info_sorted]
 
-def _smtp_send_all_addrs(host, port, sender, password, recipients, msg_str, ipv4_only=False):
+def _smtp_send_all_addrs(
+    host,
+    port,
+    mail_from,
+    username,
+    password,
+    recipients,
+    msg_str,
+    ipv4_only=False,
+    use_ssl=False,
+    require_starttls=True,
+):
     addrs = _resolve_all(host, port, ipv4_only=ipv4_only)
     if not addrs:
         print(f"[mail] No addresses to try for {host}:{port}")
@@ -38,12 +49,26 @@ def _smtp_send_all_addrs(host, port, sender, password, recipients, msg_str, ipv4
         fam_name = "IPv4" if family == _socket.AF_INET else "IPv6"
         print(f"[mail] Trying {host}:{port} -> {ip} ({fam_name}) [{i}/{len(addrs)}]")
         try:
-            with _smtplib.SMTP(host=ip, port=port, timeout=20) as server:
-                server.ehlo()
-                server.starttls(context=_ssl.create_default_context())
-                server.ehlo()
-                server.login(sender, password)
-                server.sendmail(sender, recipients, msg_str)
+            login_user = username or mail_from
+            if not login_user:
+                raise RuntimeError("No SMTP username/mail-from available for authentication")
+            if not password:
+                raise RuntimeError("No SMTP password provided")
+            if use_ssl:
+                context = _ssl.create_default_context()
+                with _smtplib.SMTP_SSL(host=ip, port=port, timeout=20, context=context) as server:
+                    server._host = host  # ensure SNI / hostname check uses canonical host
+                    server.login(login_user, password)
+                    server.sendmail(mail_from or login_user, recipients, msg_str)
+            else:
+                with _smtplib.SMTP(host=ip, port=port, timeout=20) as server:
+                    server._host = host  # ensure TLS SNI uses DNS hostname
+                    server.ehlo()
+                    if require_starttls and not SMTP_DISABLE_STARTTLS:
+                        server.starttls(context=_ssl.create_default_context())
+                        server.ehlo()
+                    server.login(login_user, password)
+                    server.sendmail(mail_from or login_user, recipients, msg_str)
             print(f"[mail] Email sent via {ip} ✔")
             return True
         except Exception as e:
@@ -87,25 +112,93 @@ def _send_via_sendgrid(sender_email, sender_name, recipients, subject, html):
         return False, repr(e)
 
 # Configuration from environment variables
-EMAIL_SENDER = os.getenv("EMAIL_SENDER")
-EMAIL_PASSWORD = os.getenv("EMAIL_PASSWORD")
+def _optional_env(name):
+    value = os.getenv(name)
+    if value is None:
+        return None
+    trimmed = value.strip()
+    return trimmed or None
+
+
+def _env_with_default(name, default):
+    value = os.getenv(name)
+    if value is None:
+        return default
+    trimmed = value.strip()
+    return trimmed or None
+
+
+def _first_nonempty_env(*names):
+    for name in names:
+        raw_value = os.getenv(name)
+        if raw_value is None:
+            continue
+        trimmed = raw_value.strip()
+        if trimmed:
+            return trimmed, name
+        print(f"[db] Environment variable {name} is set but empty; ignoring.")
+    return None, None
+
+
+EMAIL_SENDER = _optional_env("EMAIL_SENDER")
+EMAIL_PASSWORD = _optional_env("EMAIL_PASSWORD")
 EMAIL_RECIPIENT = os.getenv("EMAIL_RECIPIENT", "")  # comma-separated emails
-SMTP_SERVER = "smtp.gmail.com"
-SMTP_PORT = 587
-SMTP_SERVER_ALT = os.getenv("SMTP_SERVER_ALT", "smtp.googlemail.com")
+SMTP_SERVER = os.getenv("SMTP_SERVER", "smtp.gmail.com")
+SMTP_PORT = int(os.getenv("SMTP_PORT", "587"))
+SMTP_SERVER_ALT = _env_with_default("SMTP_SERVER_ALT", "smtp.googlemail.com")
+SMTP_SSL_PORT = int(os.getenv("SMTP_SSL_PORT", "465"))
+SMTP_USERNAME = _optional_env("SMTP_USERNAME")
+SMTP_PASSWORD = _optional_env("SMTP_PASSWORD") or EMAIL_PASSWORD
+SMTP_MAIL_FROM = _optional_env("SMTP_MAIL_FROM") or EMAIL_SENDER
+SMTP_DISABLE_STARTTLS = os.getenv("SMTP_DISABLE_STARTTLS", "0") == "1"
 FORCE_IPV4_ONLY = os.getenv("FORCE_IPV4_ONLY", "0") == "1"
-SENDGRID_API_KEY = os.getenv("SENDGRID_API_KEY")
+SENDGRID_API_KEY = _optional_env("SENDGRID_API_KEY")
 EMAIL_FROM_NAME = os.getenv("EMAIL_FROM_NAME", "Eurostar Snap Bot")
 EMAIL_SUBJECT_PREFIX = os.getenv("EMAIL_SUBJECT_PREFIX", "")
 ROUTE_LABEL = os.getenv("ROUTE_LABEL", "")
 
-# Database configuration (Railway provides DATABASE_URL)
-DATABASE_URL = (
-    os.getenv("DATABASE_URL")
-    or os.getenv("POSTGRES_URL")
-    or os.getenv("PG_URL")
-    or os.getenv("RAILWAY_PG_URL")
+# Database configuration (Railway provides DATABASE_URL or shared variants)
+DATABASE_URL, DATABASE_URL_SOURCE = _first_nonempty_env(
+    "DATABASE_URL_SHARED",
+    "DATABASE_URL",
+    "POSTGRES_URL",
+    "PG_URL",
+    "RAILWAY_PG_URL",
 )
+DATABASE_SSLMODE = _optional_env("DATABASE_SSLMODE")
+DATABASE_CONNECT_TIMEOUT = _optional_env("DATABASE_CONNECT_TIMEOUT")
+
+
+def _mask_pg_dsn(dsn: str | None) -> str | None:
+    if not dsn:
+        return dsn
+    masked = dsn.strip()
+    if "://" in masked:
+        prefix, _, remainder = masked.partition("://")
+        userinfo, at, host_part = remainder.partition("@")
+        if at:
+            if ":" in userinfo:
+                user, _ = userinfo.split(":", 1)
+                userinfo = f"{user}:***"
+            masked = f"{prefix}://{userinfo}@{host_part}"
+    masked = re.sub(r"(password|pwd)=([^\s]+)", r"\1=***", masked, flags=re.IGNORECASE)
+    return masked
+
+
+def _database_connect_kwargs():
+    kwargs = {}
+    if DATABASE_SSLMODE:
+        kwargs["sslmode"] = DATABASE_SSLMODE
+    elif DATABASE_URL and "sslmode" not in DATABASE_URL.lower():
+        kwargs["sslmode"] = "require"
+    if DATABASE_CONNECT_TIMEOUT:
+        try:
+            kwargs["connect_timeout"] = int(DATABASE_CONNECT_TIMEOUT)
+        except ValueError:
+            print(
+                f"[db] Invalid DATABASE_CONNECT_TIMEOUT={DATABASE_CONNECT_TIMEOUT!r}; ignoring."
+            )
+    return kwargs
 
 
 # SNAP URLs
@@ -486,7 +579,7 @@ async def check_snap(playwright, route_name, base_url):
 def store_entries_in_db(entries):
     """Persist scraped availability entries to PostgreSQL for historical tracking."""
     if not DATABASE_URL:
-        print("[db] DATABASE_URL not configured; skipping storage.")
+        print("[db] DATABASE_URL_SHARED/DATABASE_URL not configured; skipping storage.")
         return
 
     if not entries:
@@ -494,7 +587,15 @@ def store_entries_in_db(entries):
         return
 
     try:
-        with psycopg.connect(DATABASE_URL) as conn:
+        masked_dsn = _mask_pg_dsn(DATABASE_URL)
+        if DATABASE_URL_SOURCE:
+            print(f"[db] Using {DATABASE_URL_SOURCE} for database connection.")
+        if masked_dsn:
+            print(f"[db] Connecting using DSN (masked): {masked_dsn}")
+        conn_kwargs = _database_connect_kwargs()
+        if conn_kwargs:
+            print(f"[db] Using connection options: {conn_kwargs}")
+        with psycopg.connect(DATABASE_URL, **conn_kwargs) as conn:
             with conn.cursor() as cur:
                 cur.execute(
                     """
@@ -576,7 +677,8 @@ def store_entries_in_db(entries):
                 conn.commit()
                 print(f"[db] Inserted {len(rows_to_insert)} rows into snap_history.")
     except Exception as exc:
-        print(f"[db] Failed to store entries: {exc}")
+        dsn_display = _mask_pg_dsn(DATABASE_URL) or "<not set>"
+        print(f"[db] Failed to store entries using {dsn_display}: {exc}")
 
 
 def send_email(available_entries):
@@ -635,16 +737,35 @@ def send_email(available_entries):
 
     message = header + "".join(sections)
 
-    msg = MIMEText(message, "html", "utf-8")
-    msg["Subject"] = "🤖 The bot for cheap tickets between Amsterdam and Paris 🤖"
-    msg["From"] = EMAIL_SENDER
-    msg["To"] = EMAIL_RECIPIENT
+    mail_from = SMTP_MAIL_FROM or SMTP_USERNAME or EMAIL_SENDER
+    if not mail_from:
+        print("[mail] SMTP_MAIL_FROM/EMAIL_SENDER not configured; skipping email.")
+        return
 
     recipients = [r.strip() for r in EMAIL_RECIPIENT.split(",") if r.strip()]
+    if not recipients:
+        print("[mail] EMAIL_RECIPIENT not configured; skipping email.")
+        return
+
+    smtp_user = SMTP_USERNAME or mail_from
+    smtp_password = SMTP_PASSWORD
+    if not smtp_user or not smtp_password:
+        print("[mail] SMTP credentials missing; set SMTP_USERNAME/SMTP_PASSWORD or EMAIL_SENDER/EMAIL_PASSWORD.")
+        return
+
+    subject_base = "🤖 The bot for cheap tickets between Amsterdam and Paris 🤖"
+    subject = f"{EMAIL_SUBJECT_PREFIX.strip()} {subject_base}".strip() if EMAIL_SUBJECT_PREFIX else subject_base
+
+    msg = MIMEText(message, "html", "utf-8")
+    msg["Subject"] = subject
+    msg["From"] = _formataddr((EMAIL_FROM_NAME, mail_from))
+    msg["To"] = ", ".join(recipients)
+
+    print(f"[mail] From: {mail_from} as {_formataddr((EMAIL_FROM_NAME, mail_from))}")
     print(f"[mail] To: {recipients}")
     # Try HTTP via SendGrid first if configured
     if SENDGRID_API_KEY:
-        ok, err = _send_via_sendgrid(EMAIL_SENDER, EMAIL_FROM_NAME, recipients, msg["Subject"], message)
+        ok, err = _send_via_sendgrid(mail_from, EMAIL_FROM_NAME, recipients, msg["Subject"], message)
         if ok:
             print("[mail] Email sent via SendGrid ✔")
             return
@@ -653,14 +774,66 @@ def send_email(available_entries):
     # SMTP robust attempts (IPv4-first + alt host + global retries)
     max_global_retries = 2
     for attempt in range(1, max_global_retries+1):
-        print(f"[mail] Connecting SMTP {SMTP_SERVER}:{SMTP_PORT} (attempt {attempt}/{max_global_retries})")
-        ok = _smtp_send_all_addrs(SMTP_SERVER, SMTP_PORT, EMAIL_SENDER, EMAIL_PASSWORD, recipients, msg.as_string(), ipv4_only=FORCE_IPV4_ONLY)
-        if ok:
-            return
-        print("[mail] Trying ALT host…")
-        ok = _smtp_send_all_addrs(SMTP_SERVER_ALT, SMTP_PORT, EMAIL_SENDER, EMAIL_PASSWORD, recipients, msg.as_string(), ipv4_only=FORCE_IPV4_ONLY)
-        if ok:
-            return
+        if SMTP_SERVER:
+            print(f"[mail] Connecting SMTP {SMTP_SERVER}:{SMTP_PORT} (attempt {attempt}/{max_global_retries})")
+            ok = _smtp_send_all_addrs(
+                SMTP_SERVER,
+                SMTP_PORT,
+                mail_from,
+                smtp_user,
+                smtp_password,
+                recipients,
+                msg.as_string(),
+                ipv4_only=FORCE_IPV4_ONLY,
+                require_starttls=not SMTP_DISABLE_STARTTLS,
+            )
+            if ok:
+                return
+        if SMTP_SERVER_ALT:
+            print("[mail] Trying ALT host…")
+            ok = _smtp_send_all_addrs(
+                SMTP_SERVER_ALT,
+                SMTP_PORT,
+                mail_from,
+                smtp_user,
+                smtp_password,
+                recipients,
+                msg.as_string(),
+                ipv4_only=FORCE_IPV4_ONLY,
+                require_starttls=not SMTP_DISABLE_STARTTLS,
+            )
+            if ok:
+                return
+        if SMTP_SERVER:
+            print(f"[mail] Trying SSL on {SMTP_SERVER}:{SMTP_SSL_PORT}…")
+            ok = _smtp_send_all_addrs(
+                SMTP_SERVER,
+                SMTP_SSL_PORT,
+                mail_from,
+                smtp_user,
+                smtp_password,
+                recipients,
+                msg.as_string(),
+                ipv4_only=FORCE_IPV4_ONLY,
+                use_ssl=True,
+            )
+            if ok:
+                return
+        if SMTP_SERVER_ALT:
+            print(f"[mail] Trying SSL on ALT host {SMTP_SERVER_ALT}:{SMTP_SSL_PORT}…")
+            ok = _smtp_send_all_addrs(
+                SMTP_SERVER_ALT,
+                SMTP_SSL_PORT,
+                mail_from,
+                smtp_user,
+                smtp_password,
+                recipients,
+                msg.as_string(),
+                ipv4_only=FORCE_IPV4_ONLY,
+                use_ssl=True,
+            )
+            if ok:
+                return
         if attempt < max_global_retries:
             print("[mail] Global retry in 5s…"); _time.sleep(5)
     print("[mail] Email delivery failed after all attempts. Continuing without crash.")
