@@ -27,7 +27,7 @@ def _resolve_all(host, port, ipv4_only=False):
     info_sorted = sorted(info, key=lambda a: 0 if a[0] == _socket.AF_INET else 1)
     return [(fam, sockaddr[0]) for fam,_,_,_,sockaddr in info_sorted]
 
-def _smtp_send_all_addrs(host, port, sender, password, recipients, msg_str, ipv4_only=False):
+def _smtp_send_all_addrs(host, port, sender, password, recipients, msg_str, ipv4_only=False, use_ssl=False):
     addrs = _resolve_all(host, port, ipv4_only=ipv4_only)
     if not addrs:
         print(f"[mail] No addresses to try for {host}:{port}")
@@ -38,12 +38,20 @@ def _smtp_send_all_addrs(host, port, sender, password, recipients, msg_str, ipv4
         fam_name = "IPv4" if family == _socket.AF_INET else "IPv6"
         print(f"[mail] Trying {host}:{port} -> {ip} ({fam_name}) [{i}/{len(addrs)}]")
         try:
-            with _smtplib.SMTP(host=ip, port=port, timeout=20) as server:
-                server.ehlo()
-                server.starttls(context=_ssl.create_default_context())
-                server.ehlo()
-                server.login(sender, password)
-                server.sendmail(sender, recipients, msg_str)
+            if use_ssl:
+                context = _ssl.create_default_context()
+                with _smtplib.SMTP_SSL(host=ip, port=port, timeout=20, context=context) as server:
+                    server._host = host  # ensure SNI / hostname check uses canonical host
+                    server.login(sender, password)
+                    server.sendmail(sender, recipients, msg_str)
+            else:
+                with _smtplib.SMTP(host=ip, port=port, timeout=20) as server:
+                    server._host = host  # ensure TLS SNI uses DNS hostname
+                    server.ehlo()
+                    server.starttls(context=_ssl.create_default_context())
+                    server.ehlo()
+                    server.login(sender, password)
+                    server.sendmail(sender, recipients, msg_str)
             print(f"[mail] Email sent via {ip} ✔")
             return True
         except Exception as e:
@@ -93,6 +101,7 @@ EMAIL_RECIPIENT = os.getenv("EMAIL_RECIPIENT", "")  # comma-separated emails
 SMTP_SERVER = "smtp.gmail.com"
 SMTP_PORT = 587
 SMTP_SERVER_ALT = os.getenv("SMTP_SERVER_ALT", "smtp.googlemail.com")
+SMTP_SSL_PORT = int(os.getenv("SMTP_SSL_PORT", "465"))
 FORCE_IPV4_ONLY = os.getenv("FORCE_IPV4_ONLY", "0") == "1"
 SENDGRID_API_KEY = os.getenv("SENDGRID_API_KEY")
 EMAIL_FROM_NAME = os.getenv("EMAIL_FROM_NAME", "Eurostar Snap Bot")
@@ -654,11 +663,53 @@ def send_email(available_entries):
     max_global_retries = 2
     for attempt in range(1, max_global_retries+1):
         print(f"[mail] Connecting SMTP {SMTP_SERVER}:{SMTP_PORT} (attempt {attempt}/{max_global_retries})")
-        ok = _smtp_send_all_addrs(SMTP_SERVER, SMTP_PORT, EMAIL_SENDER, EMAIL_PASSWORD, recipients, msg.as_string(), ipv4_only=FORCE_IPV4_ONLY)
+        ok = _smtp_send_all_addrs(
+            SMTP_SERVER,
+            SMTP_PORT,
+            EMAIL_SENDER,
+            EMAIL_PASSWORD,
+            recipients,
+            msg.as_string(),
+            ipv4_only=FORCE_IPV4_ONLY,
+        )
         if ok:
             return
         print("[mail] Trying ALT host…")
-        ok = _smtp_send_all_addrs(SMTP_SERVER_ALT, SMTP_PORT, EMAIL_SENDER, EMAIL_PASSWORD, recipients, msg.as_string(), ipv4_only=FORCE_IPV4_ONLY)
+        ok = _smtp_send_all_addrs(
+            SMTP_SERVER_ALT,
+            SMTP_PORT,
+            EMAIL_SENDER,
+            EMAIL_PASSWORD,
+            recipients,
+            msg.as_string(),
+            ipv4_only=FORCE_IPV4_ONLY,
+        )
+        if ok:
+            return
+        print(f"[mail] Trying SSL on {SMTP_SERVER}:{SMTP_SSL_PORT}…")
+        ok = _smtp_send_all_addrs(
+            SMTP_SERVER,
+            SMTP_SSL_PORT,
+            EMAIL_SENDER,
+            EMAIL_PASSWORD,
+            recipients,
+            msg.as_string(),
+            ipv4_only=FORCE_IPV4_ONLY,
+            use_ssl=True,
+        )
+        if ok:
+            return
+        print(f"[mail] Trying SSL on ALT host {SMTP_SERVER_ALT}:{SMTP_SSL_PORT}…")
+        ok = _smtp_send_all_addrs(
+            SMTP_SERVER_ALT,
+            SMTP_SSL_PORT,
+            EMAIL_SENDER,
+            EMAIL_PASSWORD,
+            recipients,
+            msg.as_string(),
+            ipv4_only=FORCE_IPV4_ONLY,
+            use_ssl=True,
+        )
         if ok:
             return
         if attempt < max_global_retries:
