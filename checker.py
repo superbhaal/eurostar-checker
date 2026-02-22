@@ -7,7 +7,7 @@ import re
 import json
 import urllib.request
 
-EMAIL_SENDER = os.getenv("EMAIL_SENDER")
+EMAIL_SENDER = os.getenv("EMAIL_SENDER", "simon@my-pau.com")
 EMAIL_RECIPIENT = os.getenv("EMAIL_RECIPIENT")
 BREVO_API_KEY = os.getenv("BREVO_API_KEY")
 
