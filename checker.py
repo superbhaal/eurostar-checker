@@ -8,16 +8,26 @@ import json
 import urllib.request
 import urllib.parse
 import base64
+import psycopg2
 
 MAILGUN_API_KEY = os.getenv("MAILGUN_API_KEY")
 MAILGUN_DOMAIN = os.getenv("MAILGUN_DOMAIN", "my-pau.com")
 MAILGUN_SENDER_EMAIL = os.getenv("MAILGUN_SENDER_EMAIL", f"eurostar@{MAILGUN_DOMAIN}")
 EMAIL_RECIPIENT = os.getenv("EMAIL_RECIPIENT")
 
+# PostgreSQL configuration
+PGHOST = os.getenv("PGHOST")
+PGPORT = os.getenv("PGPORT", 5432)
+PGDATABASE = os.getenv("PGDATABASE")
+PGUSER = os.getenv("PGUSER")
+PGPASSWORD = os.getenv("PGPASSWORD")
+
 if not EMAIL_RECIPIENT:
     raise RuntimeError("Missing env var: set EMAIL_RECIPIENT")
 if not MAILGUN_API_KEY:
     raise RuntimeError("Missing env var MAILGUN_API_KEY")
+if not all([PGHOST, PGDATABASE, PGUSER, PGPASSWORD]):
+    raise RuntimeError("Missing PostgreSQL env vars: PGHOST, PGDATABASE, PGUSER, PGPASSWORD")
 
 SNAP_PARIS_TO_AMS = "https://snap.eurostar.com/fr-fr/search?adult=1&origin=8727100&destination=8400058&outbound={date}"
 SNAP_AMS_TO_PARIS = "https://snap.eurostar.com/fr-fr/search?adult=1&origin=8400058&destination=8727100&outbound={date}"
@@ -217,6 +227,57 @@ async def check_snap(playwright, route_name, base_url):
     await browser.close()
     return results
 
+def save_results_to_db(all_results):
+    """Save check results to PostgreSQL."""
+    try:
+        conn = psycopg2.connect(
+            host=PGHOST,
+            port=PGPORT,
+            database=PGDATABASE,
+            user=PGUSER,
+            password=PGPASSWORD,
+        )
+        cur = conn.cursor()
+
+        # Create a new check run
+        cur.execute("INSERT INTO check_runs (run_date) VALUES (CURRENT_TIMESTAMP) RETURNING id;")
+        check_run_id = cur.fetchone()[0]
+
+        # Insert all results
+        for result in all_results:
+            cur.execute("""
+                INSERT INTO check_results (
+                    check_run_id, route, departure_date,
+                    morning_price, morning_time_range,
+                    afternoon_price, afternoon_time_range, url
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                ON CONFLICT (check_run_id, route, departure_date)
+                DO UPDATE SET
+                    morning_price = EXCLUDED.morning_price,
+                    morning_time_range = EXCLUDED.morning_time_range,
+                    afternoon_price = EXCLUDED.afternoon_price,
+                    afternoon_time_range = EXCLUDED.afternoon_time_range,
+                    url = EXCLUDED.url,
+                    created_at = CURRENT_TIMESTAMP;
+            """, (
+                check_run_id,
+                result["route"],
+                result["date"],
+                result["morning"]["price_text"] if result.get("morning") else None,
+                result["morning"]["time_range"][0] + "-" + result["morning"]["time_range"][1] if result.get("morning") and result["morning"].get("time_range") else None,
+                result["afternoon"]["price_text"] if result.get("afternoon") else None,
+                result["afternoon"]["time_range"][0] + "-" + result["afternoon"]["time_range"][1] if result.get("afternoon") and result["afternoon"].get("time_range") else None,
+                result.get("url"),
+            ))
+
+        conn.commit()
+        cur.close()
+        conn.close()
+        print(f"✅ Saved {len(all_results)} results to database (run_id: {check_run_id})")
+    except Exception as e:
+        print(f"❌ Error saving to database: {e}")
+        raise
+
 def send_email_mailgun(available_entries):
     def build_table(rows):
         parts = []
@@ -276,9 +337,18 @@ def main():
         async with async_playwright() as playwright:
             snap_1 = await check_snap(playwright, "Paris → Amsterdam", SNAP_PARIS_TO_AMS)
             snap_2 = await check_snap(playwright, "Amsterdam → Paris", SNAP_AMS_TO_PARIS)
-            all_available = snap_1 + snap_2
-            print(f"ALL_AVAILABLE: {all_available}")
-            send_email_mailgun(all_available)
+            all_results = snap_1 + snap_2
+            print(f"ALL_RESULTS: {all_results}")
+
+            # Save to database
+            save_results_to_db(all_results)
+
+            # Send email with available slots
+            available_entries = [r for r in all_results if r.get("morning") or r.get("afternoon")]
+            if available_entries:
+                send_email_mailgun(available_entries)
+            else:
+                print("No availability detected, skipping email")
 
     asyncio.run(run())
 
