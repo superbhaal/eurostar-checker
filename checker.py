@@ -6,15 +6,18 @@ from playwright.async_api import async_playwright
 import re
 import json
 import urllib.request
+import urllib.parse
+import base64
 
-EMAIL_SENDER = os.getenv("EMAIL_SENDER", "simon@my-pau.com")
+MAILGUN_API_KEY = os.getenv("MAILGUN_API_KEY")
+MAILGUN_DOMAIN = os.getenv("MAILGUN_DOMAIN", "my-pau.com")
+MAILGUN_SENDER_EMAIL = os.getenv("MAILGUN_SENDER_EMAIL", f"eurostar@{MAILGUN_DOMAIN}")
 EMAIL_RECIPIENT = os.getenv("EMAIL_RECIPIENT")
-BREVO_API_KEY = os.getenv("BREVO_API_KEY")
 
-if not EMAIL_SENDER or not EMAIL_RECIPIENT:
-    raise RuntimeError("Missing env vars: set EMAIL_SENDER and EMAIL_RECIPIENT")
-if not BREVO_API_KEY:
-    raise RuntimeError("Missing env var BREVO_API_KEY (Brevo/Sendinblue API key)")
+if not EMAIL_RECIPIENT:
+    raise RuntimeError("Missing env var: set EMAIL_RECIPIENT")
+if not MAILGUN_API_KEY:
+    raise RuntimeError("Missing env var MAILGUN_API_KEY")
 
 SNAP_PARIS_TO_AMS = "https://snap.eurostar.com/fr-fr/search?adult=1&origin=8727100&destination=8400058&outbound={date}"
 SNAP_AMS_TO_PARIS = "https://snap.eurostar.com/fr-fr/search?adult=1&origin=8400058&destination=8727100&outbound={date}"
@@ -214,7 +217,7 @@ async def check_snap(playwright, route_name, base_url):
     await browser.close()
     return results
 
-def send_email_brevo(available_entries):
+def send_email_mailgun(available_entries):
     def build_table(rows):
         parts = []
         th_style = 'style="border:1px solid #ddd;padding:8px;text-align:left;background:#f7f7f7"'
@@ -236,35 +239,37 @@ def send_email_brevo(available_entries):
     sections = []
     for route in ["Paris → Amsterdam","Amsterdam → Paris"]:
         route_entries = [e for e in available_entries if e["route"] == route]
-        if not route_entries: 
+        if not route_entries:
             continue
-        route_entries_sorted = sorted(route_entries, key=lambda e: e["date"])  # <-- fixed bracket here
+        route_entries_sorted = sorted(route_entries, key=lambda e: e["date"])
         table_html = build_table(route_entries_sorted)
         sections.append(f"<h3 style=\"font-family:Arial,Helvetica,sans-serif\">{route}</h3>" + table_html)
     html = header + "".join(sections) if sections else header + "<p>No availability for selected dates.</p>"
 
     recipients = [email.strip() for email in EMAIL_RECIPIENT.split(",") if email.strip()]
-    to_list = [{"email": r} for r in recipients]
-    payload = {
-        "sender": {"email": EMAIL_SENDER, "name": "Eurostar Snap"},
-        "to": to_list,
-        "subject": "Eurostar Snap — disponibilité détectée" if any(e.get("morning") or e.get("afternoon") for e in available_entries) else "Eurostar Snap — rapport (aucune dispo)",
-        "htmlContent": html
-    }
+    subject = "Eurostar Snap — disponibilité détectée" if any(e.get("morning") or e.get("afternoon") for e in available_entries) else "Eurostar Snap — rapport (aucune dispo)"
 
-    req = urllib.request.Request(
-        "https://api.brevo.com/v3/smtp/email",
-        headers={
-            "api-key": BREVO_API_KEY,
-            "Content-Type": "application/json",
-            "accept": "application/json",
-        },
-        data=json.dumps(payload).encode("utf-8"),
-        method="POST",
-    )
-    with urllib.request.urlopen(req, timeout=30) as resp:
-        if resp.status not in (200, 201, 202):
-            raise RuntimeError(f"Brevo HTTP error: {resp.status}")
+    auth = base64.b64encode(f"api:{MAILGUN_API_KEY}".encode()).decode()
+
+    for recipient in recipients:
+        data = urllib.parse.urlencode({
+            "from": f"Eurostar Snap <{MAILGUN_SENDER_EMAIL}>",
+            "to": recipient,
+            "subject": subject,
+            "html": html,
+        }).encode("utf-8")
+
+        req = urllib.request.Request(
+            f"https://api.eu.mailgun.net/v3/{MAILGUN_DOMAIN}/messages",
+            data=data,
+            headers={
+                "Authorization": f"Basic {auth}",
+            },
+            method="POST",
+        )
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            if resp.status not in (200, 201):
+                raise RuntimeError(f"Mailgun HTTP error: {resp.status}")
 
 def main():
     async def run():
@@ -273,7 +278,7 @@ def main():
             snap_2 = await check_snap(playwright, "Amsterdam → Paris", SNAP_AMS_TO_PARIS)
             all_available = snap_1 + snap_2
             print(f"ALL_AVAILABLE: {all_available}")
-            send_email_brevo(all_available)
+            send_email_mailgun(all_available)
 
     asyncio.run(run())
 
