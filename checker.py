@@ -32,6 +32,9 @@ def save_run_to_db(all_results, error_message=None):
     status = "error" if error_message else "success"
     with get_db_conn() as conn:
         with conn.cursor() as cur:
+            cur.execute("DELETE FROM search_results WHERE travel_date < CURRENT_DATE")
+            cur.execute("DELETE FROM search_runs WHERE id NOT IN (SELECT DISTINCT run_id FROM search_results)")
+
             cur.execute(
                 "INSERT INTO search_runs (status, error_message) VALUES (%s, %s) RETURNING id",
                 (status, error_message)
