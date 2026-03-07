@@ -8,6 +8,10 @@ import json
 import urllib.request
 import urllib.parse
 import base64
+import psycopg2
+from psycopg2.extras import execute_values
+
+DATABASE_URL = os.getenv("DATABASE_URL")
 
 MAILGUN_API_KEY = os.getenv("MAILGUN_API_KEY")
 MAILGUN_DOMAIN = os.getenv("MAILGUN_DOMAIN", "my-pau.com")
@@ -18,6 +22,58 @@ if not EMAIL_RECIPIENT:
     raise RuntimeError("Missing env var: set EMAIL_RECIPIENT")
 if not MAILGUN_API_KEY:
     raise RuntimeError("Missing env var MAILGUN_API_KEY")
+
+def get_db_conn():
+    if not DATABASE_URL:
+        raise RuntimeError("Missing env var: DATABASE_URL")
+    return psycopg2.connect(DATABASE_URL)
+
+def save_run_to_db(all_results, error_message=None):
+    status = "error" if error_message else "success"
+    with get_db_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "INSERT INTO search_runs (status, error_message) VALUES (%s, %s) RETURNING id",
+                (status, error_message)
+            )
+            run_id = cur.fetchone()[0]
+
+            rows = []
+            for entry in all_results:
+                for period in ["morning", "afternoon"]:
+                    slot = entry.get(period)
+                    if slot:
+                        time_start, time_end = slot["time_range"] if slot.get("time_range") else (None, None)
+                        rows.append((
+                            run_id,
+                            entry["route"],
+                            entry["date"],
+                            period,
+                            slot.get("price_text"),
+                            time_start,
+                            time_end,
+                            slot.get("url"),
+                        ))
+                    else:
+                        rows.append((
+                            run_id,
+                            entry["route"],
+                            entry["date"],
+                            period,
+                            None, None, None,
+                            entry.get("url"),
+                        ))
+
+            if rows:
+                execute_values(cur, """
+                    INSERT INTO search_results
+                        (run_id, route, travel_date, period, price_text, time_start, time_end, url)
+                    VALUES %s
+                """, rows)
+
+        conn.commit()
+    print(f"[DB] Run #{run_id} enregistré ({len(rows)} résultats).")
+    return run_id
 
 SNAP_PARIS_TO_AMS = "https://snap.eurostar.com/fr-fr/search?adult=1&origin=8727100&destination=8400058&outbound={date}"
 SNAP_AMS_TO_PARIS = "https://snap.eurostar.com/fr-fr/search?adult=1&origin=8400058&destination=8727100&outbound={date}"
@@ -278,6 +334,10 @@ def main():
             snap_2 = await check_snap(playwright, "Amsterdam → Paris", SNAP_AMS_TO_PARIS)
             all_available = snap_1 + snap_2
             print(f"ALL_AVAILABLE: {all_available}")
+
+            if DATABASE_URL:
+                save_run_to_db(all_available)
+
             send_email_mailgun(all_available)
 
     asyncio.run(run())
