@@ -2,6 +2,10 @@ import os
 import psycopg2
 from psycopg2.extras import RealDictCursor
 from mcp.server.fastmcp import FastMCP
+from starlette.applications import Starlette
+from starlette.routing import Route, Mount
+from starlette.requests import Request
+from starlette.responses import JSONResponse
 
 DATABASE_URL = os.getenv("DATABASE_URL")
 
@@ -74,7 +78,17 @@ def get_eurostar_availability() -> str:
         return f"Error fetching data: {e}"
 
 
+async def availability_endpoint(request: Request) -> JSONResponse:
+    data = get_eurostar_availability()
+    return JSONResponse({"availability": data})
+
+def build_app():
+    return Starlette(routes=[
+        Route("/availability", availability_endpoint),
+        Mount("/", app=mcp.sse_app()),
+    ])
+
 if __name__ == "__main__":
     import uvicorn
     port = int(os.getenv("PORT", 8000))
-    uvicorn.run(mcp.sse_app(), host="0.0.0.0", port=port)
+    uvicorn.run(build_app(), host="0.0.0.0", port=port)
