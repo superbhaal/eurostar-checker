@@ -28,6 +28,33 @@ def get_db_conn():
         raise RuntimeError("Missing env var: DATABASE_URL")
     return psycopg2.connect(DATABASE_URL)
 
+def init_db():
+    with get_db_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS search_runs (
+                    id SERIAL PRIMARY KEY,
+                    run_at TIMESTAMP NOT NULL DEFAULT NOW(),
+                    status TEXT NOT NULL,
+                    error_message TEXT
+                )
+            """)
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS search_results (
+                    id SERIAL PRIMARY KEY,
+                    run_id INTEGER NOT NULL REFERENCES search_runs(id) ON DELETE CASCADE,
+                    route TEXT NOT NULL,
+                    travel_date DATE NOT NULL,
+                    period TEXT NOT NULL,
+                    price_text TEXT,
+                    time_start TEXT,
+                    time_end TEXT,
+                    url TEXT,
+                    created_at TIMESTAMP NOT NULL DEFAULT NOW()
+                )
+            """)
+        conn.commit()
+
 def save_run_to_db(all_results, error_message=None):
     status = "error" if error_message else "success"
     with get_db_conn() as conn:
@@ -331,6 +358,9 @@ def send_email_mailgun(available_entries):
                 raise RuntimeError(f"Mailgun HTTP error: {resp.status}")
 
 def main():
+    if DATABASE_URL:
+        init_db()
+
     async def run():
         async with async_playwright() as playwright:
             snap_1 = await check_snap(playwright, "Paris → Amsterdam", SNAP_PARIS_TO_AMS)
