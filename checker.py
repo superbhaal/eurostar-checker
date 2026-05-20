@@ -330,7 +330,8 @@ def send_email_mailgun(available_entries):
         route_entries_sorted = sorted(route_entries, key=lambda e: e["date"])
         table_html = build_table(route_entries_sorted)
         sections.append(f"<h3 style=\"font-family:Arial,Helvetica,sans-serif\">{route}</h3>" + table_html)
-    html = header + "".join(sections) if sections else header + "<p>No availability for selected dates.</p>"
+    body = header + "".join(sections) if sections else header + "<p>No availability for selected dates.</p>"
+    html = f'<div style="color:green">{body}</div>'
 
     recipients = [email.strip() for email in EMAIL_RECIPIENT.split(",") if email.strip()]
     subject = "Eurostar Snap — disponibilité détectée" if any(e.get("morning") or e.get("afternoon") for e in available_entries) else "Eurostar Snap — rapport (aucune dispo)"
